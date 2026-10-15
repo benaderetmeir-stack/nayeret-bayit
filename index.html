@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0FA3B1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ניירת בית">
+<title>ניירת בית</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&family=Rubik:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="style.css?v=1">
+<link rel="stylesheet" href="home.css?v=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230FA3B1'/%3E%3Cpath d='M14 32 32 16l18 16v18H14z' fill='%23fff'/%3E%3Cpath d='M25 38h14M25 44h10' stroke='%230E6A8C' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<!-- ===== כניסה ===== -->
+<section id="loginView" class="login" hidden>
+  <div class="login-card">
+    <div class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="currentColor"/><path d="M14 32 32 16l18 16v18H14z" fill="#fff"/><path d="M25 38h14M25 44h10" stroke="#0E6A8C" stroke-width="3" stroke-linecap="round"/></svg>
+    </div>
+    <h1 class="login-title">ניירת בית</h1>
+    <p class="login-sub">כל המסמכים של הבית והמשפחה, במקום אחד</p>
+    <form id="loginForm" class="login-form" autocomplete="on">
+      <label class="field"><span>סיסמה</span><input id="loginPassword" type="password" autocomplete="current-password" required></label>
+      <button class="btn btn-primary btn-block" type="submit" id="loginBtn">כניסה</button>
+      <p class="form-error" id="loginError" hidden></p>
+    </form>
+  </div>
+</section>
+
+<!-- ===== אפליקציה ===== -->
+<div id="appView" class="app" hidden>
+  <header class="topbar">
+    <div class="topbar-row">
+      <div class="topbar-brand">
+        <span class="topbar-logo" aria-hidden="true"><svg viewBox="0 0 64 64"><path d="M14 32 32 16l18 16v18H14z" fill="currentColor"/><path d="M25 38h14M25 44h10" stroke="#0FA3B1" stroke-width="3" stroke-linecap="round"/></svg></span>
+        <div>
+          <div class="topbar-title">ניירת בית</div>
+          <div class="topbar-sub">הבית, המשפחה והחברים</div>
+        </div>
+      </div>
+      <nav class="tabs" id="tabs" role="tablist">
+        <button class="tab is-active" data-view="home" role="tab">בית</button>
+        <button class="tab" data-view="docs" role="tab">מסמכים</button>
+        <button class="tab" data-view="trips" role="tab">נסיעות</button>
+        <button class="tab" data-view="settings" role="tab">הגדרות</button>
+      </nav>
+    </div>
+    <div class="demo-banner" id="demoBanner" hidden>מצב תצוגה: הנתונים כאן לדוגמה בלבד ולא נשמרים</div>
+  </header>
+
+  <main class="main">
+    <!-- ===== בית ===== -->
+    <section class="view" id="homeView">
+      <form class="home-search" id="homeSearchForm">
+        <input id="homeSearch" type="search" placeholder="מה מחפשים? שם, רופא, מוצר, מלון, מספר פוליסה…" autocomplete="off">
+        <button class="btn btn-primary" type="submit">חיפוש</button>
+      </form>
+      <button class="cleanup-banner" id="cleanupBanner" hidden></button>
+      <div class="panel" id="remindPanel" hidden>
+        <h2 class="panel-title">תזכורות קרובות</h2>
+        <ul class="remind-list" id="remindList"></ul>
+      </div>
+      <h2 class="section-title">לפי נושא</h2>
+      <div class="topic-grid" id="topicGrid"></div>
+      <h2 class="section-title" id="recentTitle">נוספו לאחרונה</h2>
+      <div class="doc-list" id="recentList"></div>
+      <div class="empty" id="homeEmpty" hidden>
+        <p>עוד אין מסמכים. לחצי על "מסמך חדש" כדי לצלם או להעלות את הראשון.</p>
+      </div>
+    </section>
+
+    <!-- ===== מסמכים (חיפוש וסינון) ===== -->
+    <section class="view" id="docsView" hidden>
+      <div class="search-bar">
+        <div class="search-main">
+          <input id="qText" type="search" placeholder="חיפוש בכל המסמכים: שם, נושא, מילה מתוך המסמך…" autocomplete="off">
+        </div>
+        <div class="filter-row">
+          <label class="field"><span>נושא</span><select id="qTopic"></select></label>
+          <label class="field"><span>אדם</span><select id="qPerson"></select></label>
+          <label class="field"><span>מתאריך</span><input id="qFrom" type="date"></label>
+          <label class="field"><span>עד תאריך</span><input id="qTo" type="date"></label>
+          <button class="btn btn-ghost btn-sm" id="qClear" type="button">ניקוי</button>
+        </div>
+      </div>
+      <p class="result-count" id="resultCount"></p>
+      <div class="doc-list" id="docList"></div>
+    </section>
+
+    <!-- ===== נסיעות ===== -->
+    <section class="view" id="tripsView" hidden>
+      <div class="trips-head">
+        <h2 class="section-title">נסיעות</h2>
+        <button class="btn btn-ghost btn-sm" id="tripNew">נסיעה חדשה</button>
+      </div>
+      <div class="trip-list" id="tripList"></div>
+      <div id="tripDetail" hidden>
+        <button class="link-btn" id="tripBack">→ כל הנסיעות</button>
+        <div class="trip-head" id="tripHead"></div>
+        <div class="doc-list" id="tripDocs"></div>
+      </div>
+    </section>
+
+    <!-- ===== הגדרות ===== -->
+    <section class="view" id="settingsView" hidden>
+      <div class="panel">
+        <h2 class="panel-title">זיהוי מסמכים</h2>
+        <p class="hint">מפתח חינמי מ-Google AI Studio. אפשר להשתמש באותו מפתח של ניירת העסק.</p>
+        <label class="field"><span>מפתח זיהוי (Gemini API key)</span><input id="sKey" autocomplete="off" dir="ltr"></label>
+        <p class="hint"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">לקבלת מפתח חינמי ←</a></p>
+        <div class="row-actions"><button class="btn btn-primary" id="sSaveKey">שמירה</button></div>
+      </div>
+      <div class="panel">
+        <h2 class="panel-title">בני משפחה ואנשים</h2>
+        <p class="hint">המערכת לומדת את השמות לבד מהמסמכים. אפשר להוסיף או למחוק כאן.</p>
+        <ul class="chips" id="sPeople"></ul>
+        <div class="inline-add"><input id="sPersonNew" placeholder="שם חדש"><button class="btn btn-ghost btn-sm" id="sPersonAdd">הוספה</button></div>
+      </div>
+      <div class="panel">
+        <h2 class="panel-title">נושאים</h2>
+        <ul class="chips" id="sTopics"></ul>
+        <div class="inline-add"><input id="sTopicNew" placeholder="נושא חדש"><button class="btn btn-ghost btn-sm" id="sTopicAdd">הוספה</button></div>
+      </div>
+      <div class="panel">
+        <h2 class="panel-title">סיסמה</h2>
+        <p class="hint">הסיסמה משותפת לכל מי שנכנס. אחרי החלפה, כל מי שלא יודע את החדשה לא ייכנס.</p>
+        <label class="field"><span>סיסמה חדשה</span><input id="sPw1" type="password" autocomplete="new-password"></label>
+        <label class="field"><span>שוב, לאימות</span><input id="sPw2" type="password" autocomplete="new-password"></label>
+        <div class="row-actions"><button class="btn btn-primary" id="sPwSave">החלפת סיסמה</button></div>
+      </div>
+      <div class="panel">
+        <h2 class="panel-title">יציאה</h2>
+        <p class="hint">המכשיר זוכר את הכניסה. כדי שבפעם הבאה תידרש סיסמה, לחצי יציאה.</p>
+        <div class="row-actions"><button class="btn btn-ghost" id="sLogout">יציאה</button></div>
+      </div>
+    </section>
+  </main>
+
+  <button class="fab" id="fab" aria-label="מסמך חדש"><span aria-hidden="true">+</span> מסמך חדש</button>
+</div>
+
+<!-- ===== חלון העלאה ===== -->
+<dialog id="uploadDlg" class="dlg dlg-wide">
+  <div class="dlg-head">
+    <h2 id="upTitle">מסמך חדש</h2>
+    <button class="icon-btn" data-close aria-label="סגירה">✕</button>
+  </div>
+
+  <div class="up-step" id="upCollect">
+    <div class="up-start" id="upStart">
+      <label class="big-choice">
+        <input type="file" accept="image/*" capture="environment" id="inCamera" class="visually-hidden">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+        <span>צילום</span>
+      </label>
+      <label class="big-choice">
+        <input type="file" accept="image/*,application/pdf" multiple id="inFile" class="visually-hidden">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M12 10v7M9 13l3-3 3 3"/></svg>
+        <span>קובץ / PDF</span>
+      </label>
+    </div>
+    <div class="up-pages" id="upPagesBox" hidden>
+      <ol class="page-strip" id="upPages"></ol>
+      <div class="ask-more">
+        <p class="ask-q">יש עוד דף למסמך הזה?</p>
+        <div class="row-actions">
+          <label class="btn btn-ghost"><input type="file" accept="image/*" capture="environment" id="inCameraMore" class="visually-hidden">כן, צלם עוד דף</label>
+          <label class="btn btn-ghost"><input type="file" accept="image/*,application/pdf" multiple id="inFileMore" class="visually-hidden">כן, הוסף קובץ</label>
+          <button class="btn btn-primary" id="upDone">לא, סיימתי</button>
+        </div>
+      </div>
+    </div>
+    <div class="busy" id="upBusy" hidden><span class="spinner"></span><span id="upBusyText">מעבד…</span></div>
+    <div class="busy-skip" id="upSkipBox" hidden><button type="button" class="btn btn-ghost" id="upSkip">לוקח הרבה זמן? דלגי ומלאי ידנית</button></div>
+  </div>
+
+  <div class="up-step" id="upMulti" hidden>
+    <p class="ask-q" id="upMultiQ">נבחרו כמה קבצים. מה הם?</p>
+    <div class="row-actions">
+      <button class="btn btn-primary" id="upMultiSame">דפים של אותו מסמך</button>
+      <button class="btn btn-ghost" id="upMultiSep">מסמכים נפרדים</button>
+    </div>
+  </div>
+
+  <div class="up-step" id="upPdfSplit" hidden>
+    <p class="ask-q" id="upPdfSplitQ">בקובץ יש כמה דפים. מה הם?</p>
+    <div class="row-actions">
+      <button class="btn btn-primary" id="upPdfOne">מסמך אחד</button>
+      <button class="btn btn-ghost" id="upPdfEach">כל דף מסמך נפרד</button>
+    </div>
+    <p class="hint">למשל: סיכום ביקור של כמה דפים = מסמך אחד. קובץ עם כמה מרשמים נפרדים = כל דף מסמך נפרד.</p>
+  </div>
+
+  <form class="up-step up-review" id="upReview" hidden>
+    <div class="review-img">
+      <div class="review-img-frame" id="rvImgFrame"><img id="rvImg" alt="תצוגת המסמך"></div>
+      <div class="review-img-nav" id="rvImgNav"></div>
+    </div>
+    <div class="review-form">
+      <div class="batch-nav" id="rvBatch" hidden>
+        <div class="batch-row">
+          <button type="button" class="btn btn-ghost btn-sm" id="rvPrev">→ הקודם</button>
+          <b id="rvBatchPos">מסמך 1 מתוך 1</b>
+          <button type="button" class="btn btn-ghost btn-sm" id="rvNext">הבא ←</button>
+        </div>
+        <div class="batch-dots" id="rvBatchDots"></div>
+        <button type="button" class="link-btn batch-drop" id="rvDrop">לא לשמור את המסמך הזה</button>
+      </div>
+      <div class="notice notice-info" id="rvRecog" hidden></div>
+
+      <label class="field"><span>כותרת</span><input id="rvTitle" autocomplete="off" maxlength="80"></label>
+      <div class="grid2">
+        <label class="field"><span>נושא</span><select id="rvTopic"></select></label>
+        <label class="field" id="rvTopicNewBox" hidden><span>נושא חדש</span><input id="rvTopicNew" autocomplete="off" maxlength="30"></label>
+        <label class="field"><span>תאריך המסמך</span><input id="rvDate" type="date"></label>
+        <label class="field span2"><span>של מי (אפשר כמה, מופרדים בפסיק)</span><input id="rvPeople" autocomplete="off" list="peopleList"></label>
+        <label class="field"><span>גורם / ספק</span><input id="rvProvider" autocomplete="off" placeholder="רופא, חנות, חברת ביטוח…"></label>
+        <label class="field"><span>סכום ₪ (אם יש)</span><input id="rvAmount" type="number" step="0.01" inputmode="decimal"></label>
+        <label class="field"><span>רלוונטי עד</span><input id="rvUntil" type="date"></label>
+        <label class="field"><span>מה קורה בתאריך הזה</span><input id="rvReason" autocomplete="off" maxlength="30" placeholder="סוף אחריות, סוף הפוליסה…"></label>
+        <label class="field span2" id="rvTripBox" hidden><span>נסיעה</span><select id="rvTrip"></select></label>
+      </div>
+      <datalist id="peopleList"></datalist>
+      <label class="field"><span>פירוט</span><input id="rvDetails" autocomplete="off" maxlength="200"></label>
+      <label class="field"><span>הערה</span><input id="rvNote" autocomplete="off"></label>
+      <details class="fulltext-box"><summary>הטקסט שזוהה במסמך (לחיפוש)</summary><p id="rvFullText"></p></details>
+
+      <div class="row-actions sticky-actions">
+        <button class="btn btn-primary" type="submit" id="rvSave">אישור ושמירה</button>
+        <button class="btn btn-ghost" type="button" id="rvCancel">ביטול</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<!-- ===== צפייה במסמך ===== -->
+<dialog id="viewDlg" class="dlg dlg-full">
+  <div class="dlg-head">
+    <h2 id="vwTitle">מסמך</h2>
+    <div class="vw-tools">
+      <button class="icon-btn" id="vwZoomOut" aria-label="הקטנה">−</button>
+      <button class="icon-btn" id="vwZoomIn" aria-label="הגדלה">+</button>
+      <button class="btn btn-ghost btn-sm" id="vwCal" hidden>הוסף ליומן</button>
+      <button class="btn btn-ghost btn-sm" id="vwPrint">הדפסה</button>
+      <button class="btn btn-ghost btn-sm" id="vwDownload">הורדה</button>
+      <button class="btn btn-ghost btn-sm" id="vwShare">שיתוף</button>
+      <button class="btn btn-ghost btn-sm" id="vwEdit">עריכה</button>
+      <button class="btn btn-danger btn-sm" id="vwDelete">מחיקה</button>
+      <button class="icon-btn" data-close aria-label="סגירה">✕</button>
+    </div>
+  </div>
+  <div class="vw-meta" id="vwMeta"></div>
+  <div class="vw-body" id="vwBody"></div>
+</dialog>
+
+<!-- ===== הצעות למחיקה ===== -->
+<dialog id="cleanDlg" class="dlg">
+  <div class="dlg-head">
+    <h2>מסמכים שכבר לא רלוונטיים</h2>
+    <button class="icon-btn" data-close aria-label="סגירה">✕</button>
+  </div>
+  <p class="hint" style="margin-bottom:10px">עברה חצי שנה מאז שהמסמכים האלה הפסיקו להיות רלוונטיים. סמני ליד כל אחד "למחוק" או "לשמור". מה שתשמרי לא יוצע שוב. מסמך שנמחק נשאר 30 יום בסל האשפה של הדרייב.</p>
+  <ul class="clean-list" id="cleanList"></ul>
+  <div class="row-actions">
+    <button class="btn btn-primary" id="cleanGo">ביצוע</button>
+    <button class="btn btn-ghost" data-close>אחר כך</button>
+  </div>
+</dialog>
+
+<!-- ===== נסיעה (עריכה) ===== -->
+<dialog id="tripDlg" class="dlg dlg-small">
+  <div class="dlg-head">
+    <h2 id="tdTitle">נסיעה</h2>
+    <button class="icon-btn" data-close aria-label="סגירה">✕</button>
+  </div>
+  <label class="field"><span>שם הנסיעה</span><input id="tdName" placeholder="למשל: רומא, מרץ 2027"></label>
+  <div class="grid2">
+    <label class="field"><span>מתאריך</span><input id="tdFrom" type="date"></label>
+    <label class="field"><span>עד תאריך</span><input id="tdTo" type="date"></label>
+  </div>
+  <div class="row-actions">
+    <button class="btn btn-primary" id="tdSave">שמירה</button>
+    <button class="btn btn-danger" id="tdDelete" hidden>מחיקת הנסיעה</button>
+  </div>
+</dialog>
+
+<dialog id="confirmDlg" class="dlg dlg-small">
+  <p id="cfText"></p>
+  <div class="row-actions">
+    <button class="btn btn-danger" id="cfYes">כן</button>
+    <button class="btn btn-ghost" id="cfNo">ביטול</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="config.js?v=1"></script>
+<script type="module" src="app.js?v=1"></script>
+</body>
+</html>
