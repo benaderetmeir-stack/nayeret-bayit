@@ -1,8 +1,8 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
-import { RemoteApi, DemoApi, sha256Hex } from "./api.js?v=2";
-import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=2";
-import { recognize, DEFAULT_TOPICS, addMonths } from "./ocr.js?v=2";
-import { scanPage, scannerSupported } from "./scanner.js?v=2";
+import { RemoteApi, DemoApi, sha256Hex } from "./api.js?v=3";
+import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=3";
+import { recognize, DEFAULT_TOPICS, addMonths } from "./ocr.js?v=3";
+import { scanPage, scannerSupported } from "./scanner.js?v=3";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -123,6 +123,16 @@ function reminders() {
     out.push({ key: `d:${d.id}:${d.relevantUntil}`, ico: topicIcon(d.topic), days: n, docId: d.id, title: d.title || "מסמך",
       sub: n < 0 ? `${reason}: עבר לפני ${-n} ימים (${fmtDate(d.relevantUntil)})` : n === 0 ? `${reason}: היום` : `${reason}: בעוד ${n} ימים (${fmtDate(d.relevantUntil)})`,
       cal: { title: `${reason}: ${d.title || "מסמך"}`, date: n > 30 ? addDays(d.relevantUntil, -30) : today(), details: `${reason} ב-${fmtDate(d.relevantUntil)}. מתוך ניירת בית.` } });
+  }
+  // "הזכר לי" שהוגדר במסמך: מופיע מ-7 ימים לפני
+  for (const d of state.docs) {
+    if (!d.remindAt) continue;
+    const n = daysUntil(d.remindAt);
+    if (n > 7 || n < -30) continue;
+    const what = d.remindText || d.title || "מסמך";
+    out.push({ key: `r:${d.id}:${d.remindAt}`, ico: "🔔", days: n, docId: d.id, title: what,
+      sub: `${n < 0 ? `תזכורת מ-${fmtDate(d.remindAt)}` : n === 0 ? "תזכורת להיום" : `תזכורת בעוד ${n} ימים (${fmtDate(d.remindAt)})`}${d.remindText ? ` · ${d.title || ""}` : ""}`,
+      cal: { title: what, date: n > 0 ? d.remindAt : today(), details: `${d.title || ""}. מתוך ניירת בית.` } });
   }
   for (const t of state.settings.trips || []) {
     if (!t.from) continue;
@@ -320,9 +330,10 @@ async function openViewer(d) {
     v ? `<span class="tag ${v.cls}">${esc(v.text)}</span>` : "",
     t ? `<span class="tag tag-trip">✈️ ${esc(t.name)}</span>` : "",
     d.details ? `<span class="vw-details">פירוט: <b>${esc(d.details)}</b></span>` : "",
-    d.note ? `<span class="vw-details">הערה: <b>${esc(d.note)}</b></span>` : ""
+    d.note ? `<span class="vw-details">הערה: <b>${esc(d.note)}</b></span>` : "",
+    d.remindAt ? `<span class="tag tag-soon">🔔 ${fmtDate(d.remindAt)}${d.remindText ? " · " + esc(d.remindText) : ""}</span>` : ""
   ].join("");
-  $("vwCal").hidden = !d.relevantUntil;
+  $("vwCal").hidden = !d.relevantUntil && !d.remindAt;
   $("vwBody").innerHTML = `<div class="busy"><span class="spinner"></span>טוען…</div>`;
   $("viewDlg").showModal();
   try { view.pages = await getPages(d.id); } catch (e) { console.error(e); view.pages = []; $("vwBody").innerHTML = `<div class="empty"><p>לא הצלחתי לטעון את המסמך. בדקי חיבור ונסי שוב.</p></div>`; return; }
@@ -334,7 +345,9 @@ function renderViewerPages() {
 $("vwZoomIn").onclick = () => { view.zoom = Math.min(3, view.zoom + 0.25); renderViewerPages(); };
 $("vwZoomOut").onclick = () => { view.zoom = Math.max(0.5, view.zoom - 0.25); renderViewerPages(); };
 $("vwCal").onclick = () => {
-  const d = view.doc, reason = d.relevantReason || "בתוקף עד", n = daysUntil(d.relevantUntil);
+  const d = view.doc;
+  if (d.remindAt) return window.open(calUrl({ title: d.remindText || d.title || "תזכורת", date: d.remindAt, details: `${d.title || ""}. מתוך ניירת בית.` }), "_blank", "noopener");
+  const reason = d.relevantReason || "בתוקף עד", n = daysUntil(d.relevantUntil);
   window.open(calUrl({ title: `${reason}: ${d.title || "מסמך"}`, date: n > 30 ? addDays(d.relevantUntil, -30) : today(), details: `${reason} ב-${fmtDate(d.relevantUntil)}. מתוך ניירת בית.` }), "_blank", "noopener");
 };
 async function docPdf(d, pages) {
@@ -530,7 +543,8 @@ $("rvDrop").onclick = () => { const d = up.batch.drafts[up.batch.i]; d.drop = !d
 // טופס האישור כאובייקט פשוט: קל לשמור ולהחזיר בדפדוף
 function formFromDoc(d) {
   return { title: d.title || "", topic: d.topic || "", people: (d.people || []).join(", "), date: d.date || "", provider: d.provider || "", amount: d.amount ?? "",
-    until: d.relevantUntil || "", reason: d.relevantReason || "", details: d.details || "", note: d.note || "", fullText: d.fullText || "", tripId: d.tripId || "", tripNew: null };
+    until: d.relevantUntil || "", reason: d.relevantReason || "", details: d.details || "", note: d.note || "", fullText: d.fullText || "", tripId: d.tripId || "", tripNew: null,
+    remindSel: d.remindAt ? "date" : "", remindDate: d.remindAt || "", remindText: d.remindText || "" };
 }
 function formFromResult(r) {
   const f = formFromDoc({ ...r, people: (r.people || []).map(matchPerson) });
@@ -583,12 +597,15 @@ function fillForm(f, rec) {
   $("rvUntil").value = f.until; $("rvReason").value = f.reason; $("rvDetails").value = f.details; $("rvNote").value = f.note;
   $("rvFullText").textContent = f.fullText || "(אין)"; up.fullText = f.fullText || "";
   setTripOptions(f);
+  $("rvRemindSel").value = f.remindSel || ""; $("rvRemindDate").value = f.remindDate || ""; $("rvRemindText").value = f.remindText || ""; syncRemindUi();
+  checkDup();
   $("peopleList").innerHTML = people().map((p) => `<option value="${esc(p)}">`).join("");
 }
 function getForm() {
   return { title: $("rvTitle").value.trim(), topic: $("rvTopic").value, topicNew: $("rvTopicNew").value.trim(), people: $("rvPeople").value, date: $("rvDate").value,
     provider: $("rvProvider").value.trim(), amount: $("rvAmount").value, until: $("rvUntil").value, reason: $("rvReason").value.trim(), details: $("rvDetails").value.trim(),
-    note: $("rvNote").value.trim(), fullText: up.fullText || "", tripId: $("rvTrip").value, tripNew: up.tripNew };
+    note: $("rvNote").value.trim(), fullText: up.fullText || "", tripId: $("rvTrip").value, tripNew: up.tripNew,
+    remindSel: $("rvRemindSel").value, remindDate: $("rvRemindDate").value, remindText: $("rvRemindText").value.trim() };
 }
 $("rvTopic").addEventListener("change", () => {
   const o = $("rvTopic").value === OTHER_TOPIC; $("rvTopicNewBox").hidden = !o; if (o) setTimeout(() => $("rvTopicNew").focus(), 30);
@@ -617,9 +634,53 @@ function formToDoc(f) {
   const ppl = f.people.split(/[,،]/).map((s) => s.trim()).filter(Boolean);
   const amount = f.amount === "" ? null : (Number.isFinite(parseFloat(f.amount)) ? Math.round(parseFloat(f.amount) * 100) / 100 : null);
   const title = f.title || `${topic}${f.provider ? " – " + f.provider : ""}${f.date ? " " + fmtDate(f.date) : ""}`;
+  const remindAt = remindDateOf(f);
+  if (f.remindSel === "date" && !remindAt) { toast("חסר תאריך לתזכורת"); $("rvRemindDate").focus(); return null; }
   return { title, topic, people: ppl, date: f.date, provider: f.provider, amount, relevantUntil: f.until, relevantReason: f.until ? (f.reason || "בתוקף עד") : "",
-    details: f.details, note: f.note, fullText: f.fullText, tripId: f.tripId };
+    details: f.details, note: f.note, fullText: f.fullText, tripId: f.tripId, remindAt, remindText: remindAt ? f.remindText : "" };
 }
+// "הזכר לי": בעוד שבוע / חודש / שנה, או תאריך מסוים
+function remindDateOf(f) {
+  const v = f.remindSel;
+  if (!v) return "";
+  if (v === "date") return f.remindDate || "";
+  if (/^\d+$/.test(v)) return addDays(today(), Number(v));
+  if (/^m\d+$/.test(v)) return addMonths(today(), Number(v.slice(1)));
+  return "";
+}
+function syncRemindUi() {
+  const v = $("rvRemindSel").value;
+  $("rvRemindDateBox").hidden = v !== "date";
+  $("rvRemindTextBox").hidden = !v;
+}
+$("rvRemindSel").addEventListener("change", () => { syncRemindUi(); if ($("rvRemindSel").value === "date") setTimeout(() => $("rvRemindDate").focus(), 30); });
+
+// שני מסמכים באותה העלאה עם כמעט אותו טקסט
+function findDupPair(a, b) { const A = words(a.fullText), B = words(b.fullText); if (A.size < 8) return false; let n = 0; A.forEach((w) => B.has(w) && n++); return n / Math.max(A.size, B.size) >= 0.8; }
+// מסמך שכבר שמור? (צולם פעמיים): אותו טקסט, או אותו תאריך + אותו גורם/סכום
+const words = (s) => new Set(norm(s).split(" ").filter((w) => w.length > 1));
+function findDuplicate(f, selfId) {
+  const tw = words(f.fullText), amt = parseFloat(f.amount);
+  return state.docs.find((d) => {
+    if (d.id === selfId) return false;
+    if (tw.size >= 8 && d.fullText) {
+      const dw = words(d.fullText); let both = 0; tw.forEach((w) => dw.has(w) && both++);
+      if (both / Math.max(tw.size, dw.size) >= 0.8) return true;
+    }
+    if (f.date && d.date === f.date) {
+      if (Number.isFinite(amt) && d.amount != null && Math.abs(d.amount - amt) < 0.01) return true;
+      if (f.provider && d.provider && norm(f.provider) === norm(d.provider) && norm(f.title) === norm(d.title)) return true;
+    }
+    return false;
+  }) || null;
+}
+function checkDup() {
+  const f = getForm(), dup = findDuplicate(f, up.edit?.id);
+  up.dup = dup;
+  $("rvDup").hidden = !dup;
+  if (dup) $("rvDup").innerHTML = `נראה שהמסמך הזה כבר שמור: <b>${esc(dup.title || "מסמך")}</b>${dup.date ? ` מ-${fmtDate(dup.date)}` : ""}. אם זה אותו מסמך, אין צורך לשמור שוב.`;
+}
+["rvDate", "rvAmount", "rvProvider", "rvTitle"].forEach((id) => $(id).addEventListener("change", checkDup));
 async function learnFrom(doc, tripNew) {
   const patch = {};
   const newPeople = doc.people.filter((p) => !people().includes(p));
@@ -663,9 +724,12 @@ $("upReview").addEventListener("submit", async (e) => {
     const d = b.drafts[k];
     if (d.drop || d.saved) continue;
     if (k !== b.i) showDraft(k);
-    const doc = formToDoc(d.form || getForm());
-    if (!doc) { if (b.drafts.length > 1) toast(`מסמך ${k + 1}: חסר נושא`, 3500); return; }
-    todo.push({ d, doc, tripNew: (d.form || getForm()).tripNew });
+    const f = d.form || getForm();
+    const doc = formToDoc(f);
+    if (!doc) { if (b.drafts.length > 1) toast(`מסמך ${k + 1}: חסרים פרטים`, 3500); return; }
+    const dup = findDuplicate(f) || todo.map((t) => t.f).find((g) => g.fullText && findDupPair(g, f));
+    if (dup && !(await confirmBox(`${b.drafts.length > 1 ? `מסמך ${k + 1}: ` : ""}נראה שהמסמך כבר שמור${dup.title ? ` ("${dup.title}")` : ""}. לשמור בכל זאת?`, "שמור בכל זאת", false))) return;
+    todo.push({ d, doc, f, tripNew: f.tripNew });
   }
   if (!todo.length) { $("uploadDlg").close(); return; }
   btn.disabled = true;
