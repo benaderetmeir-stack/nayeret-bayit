@@ -1,5 +1,5 @@
 // סורק מסמכים מהמצלמה: מסגרת ירוקה סביב הדף, צילום, ואז חיתוך ויישור
-import { compressCanvasSource } from "./images.js?v=3";
+import { compressCanvasSource } from "./images.js?v=4";
 
 /* ---------- זיהוי הדף בתמונה קטנה ---------- */
 // מחזיר 4 פינות [TL, TR, BR, BL] ביחס (0..1), או null
@@ -117,7 +117,7 @@ function buildUi() {
     <div class="sc-bar" id="scLive">
       <button type="button" class="sc-btn" id="scCancel">ביטול</button>
       <button type="button" class="sc-shoot" id="scShoot" aria-label="צילום"></button>
-      <label class="sc-auto"><input type="checkbox" id="scAuto" checked> צילום אוטומטי</label>
+      <span class="sc-side"><label class="sc-auto"><input type="checkbox" id="scAuto" checked> צילום אוטומטי</label><button type="button" class="sc-link" id="scNative">צילום רגיל</button></span>
     </div>
     <div class="sc-bar" id="scEdit" hidden>
       <button type="button" class="sc-btn" id="scRetake">צילום מחדש</button>
@@ -130,13 +130,18 @@ function buildUi() {
 }
 
 // פותח את הסורק. מחזיר data URL של הדף, או null אם בוטל. fallback() נקרא אם אין גישה למצלמה
-export async function scanPage() {
+// onNative: נקרא מיד בלחיצה על "צילום רגיל" (בתוך הלחיצה, כדי שהטלפון יפתח את המצלמה הרגילה)
+export async function scanPage({ onNative } = {}) {
   ui ||= buildUi();
   const { el, $, video, overlay, still, stage } = ui;
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1440 } }, audio: false });
   } catch (e) { const err = new Error("no-camera"); err.cause = e; throw err; }
+  // איפוס המסך (אם הסורק כבר נפתח קודם)
+  $("scLive").hidden = false; $("scEdit").hidden = true; still.hidden = true; video.style.visibility = "";
+  $("scHint").textContent = "מכוונים את המצלמה אל הדף";
+  overlay.getContext("2d").clearRect(0, 0, overlay.width, overlay.height);
   if (!el.open) el.showModal();
   video.srcObject = stream; await video.play().catch(() => {});
   await new Promise((r) => (video.videoWidth ? r() : video.addEventListener("loadedmetadata", r, { once: true })));
@@ -217,6 +222,7 @@ export async function scanPage() {
     stableSince = Date.now(); last = null; tick();
   };
   $("scCancel").onclick = () => finish(null);
+  $("scNative").onclick = () => { finish(null); onNative && onNative(); };
   $("scShoot").onclick = () => capture();
   $("scRetake").onclick = backToLive;
   $("scFull").onclick = () => finish(compressCanvasSource(frame, frame.width, frame.height));

@@ -1,8 +1,8 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
-import { RemoteApi, DemoApi, sha256Hex } from "./api.js?v=3";
-import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=3";
-import { recognize, DEFAULT_TOPICS, addMonths } from "./ocr.js?v=3";
-import { scanPage, scannerSupported } from "./scanner.js?v=3";
+import { RemoteApi, DemoApi, sha256Hex } from "./api.js?v=4";
+import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=4";
+import { recognize, DEFAULT_TOPICS, addMonths } from "./ocr.js?v=4";
+import { scanPage, scannerSupported } from "./scanner.js?v=4";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -430,18 +430,18 @@ $("fab").onclick = () => openUpload();
 $("uploadDlg").addEventListener("close", () => { up.runId++; up.skipCtl?.abort(); ["inCamera", "inFile", "inCameraMore", "inFileMore"].forEach((id) => ($(id).value = "")); });
 function bindInput(id, more) { $(id).addEventListener("change", (e) => { const files = [...e.target.files]; e.target.value = ""; if (files.length) handleFiles(files, more); }); }
 bindInput("inCamera", false); bindInput("inFile", false); bindInput("inCameraMore", true); bindInput("inFileMore", true);
-// צילום: סורק עם מסגרת ירוקה. אם אין גישה למצלמה, נשארים עם המצלמה הרגילה
-let useNativeCamera = false;
-["inCamera", "inCameraMore"].forEach((id) => $(id).closest("label").addEventListener("click", async (e) => {
-  if (useNativeCamera || !scannerSupported()) return;
-  e.preventDefault();
+// סריקה עם מסגרת ירוקה, ולצידה צילום רגיל (כשהסורק לא תופס טוב)
+if (scannerSupported()) { $("upScan").hidden = false; $("upScanMore").hidden = false; }
+async function doScan(nativeInputId) {
   let page;
-  try { page = await scanPage(); }
-  catch (err) { console.warn(err); useNativeCamera = true; toast("לא קיבלתי גישה למצלמה. לחצי שוב על הצילום כדי לצלם במצלמה הרגילה.", 4500); return; }
+  try { page = await scanPage({ onNative: () => $(nativeInputId).click() }); }
+  catch (err) { console.warn(err); $("upScan").hidden = $("upScanMore").hidden = true; toast("לא קיבלתי גישה למצלמה. אפשר לצלם ב'צילום רגיל'.", 4500); return; }
   if (!page) return;
   up.pages.push(page);
   $("upStart").hidden = true; showStep("upCollect"); renderPageStrip();
-}));
+}
+$("upScan").onclick = () => doScan("inCamera");
+$("upScanMore").onclick = () => doScan("inCameraMore");
 function handleFiles(files, more) {
   if (!more && files.length > 1) { up.pendingFiles = files; $("upMultiQ").textContent = `נבחרו ${files.length} קבצים. מה הם?`; showStep("upMulti"); return; }
   addFiles(files);

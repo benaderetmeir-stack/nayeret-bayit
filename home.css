@@ -92,3 +92,14 @@ dialog.scanner::backdrop { background: #000; }
 .sc-ok { background: #22C55E; }
 .sc-shoot { width: 70px; height: 70px; border-radius: 50%; border: 5px solid #fff; background: #22C55E; cursor: pointer; flex: none; }
 .sc-auto { color: #fff; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+
+.sc-side { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.sc-link { background: none; border: 0; color: #fff; text-decoration: underline; font: inherit; font-size: 14px; padding: 0; cursor: pointer; }
+.up-start { grid-template-columns: repeat(3, 1fr); }
+button.big-choice { font: inherit; font-weight: 700; font-size: 17px; }
+.big-choice[hidden] { display: none; }
+@media (max-width: 640px) {
+  .up-start { grid-template-columns: 1fr 1fr; }
+  .up-start #upScan { grid-column: 1 / -1; }
+  .up-start .big-choice { padding: 22px 10px; }
+}
