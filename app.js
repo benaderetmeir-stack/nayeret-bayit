@@ -1,7 +1,8 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
-import { RemoteApi, DemoApi, sha256Hex } from "./api.js?v=1";
-import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=1";
-import { recognize, DEFAULT_TOPICS, addMonths } from "./ocr.js?v=1";
+import { RemoteApi, DemoApi, sha256Hex } from "./api.js?v=2";
+import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=2";
+import { recognize, DEFAULT_TOPICS, addMonths } from "./ocr.js?v=2";
+import { scanPage, scannerSupported } from "./scanner.js?v=2";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -119,7 +120,7 @@ function reminders() {
     const n = daysUntil(d.relevantUntil);
     if (n > REMIND_AHEAD_DAYS || n < -14) continue;
     const reason = d.relevantReason || "בתוקף עד";
-    out.push({ ico: topicIcon(d.topic), days: n, docId: d.id, title: d.title || "מסמך",
+    out.push({ key: `d:${d.id}:${d.relevantUntil}`, ico: topicIcon(d.topic), days: n, docId: d.id, title: d.title || "מסמך",
       sub: n < 0 ? `${reason}: עבר לפני ${-n} ימים (${fmtDate(d.relevantUntil)})` : n === 0 ? `${reason}: היום` : `${reason}: בעוד ${n} ימים (${fmtDate(d.relevantUntil)})`,
       cal: { title: `${reason}: ${d.title || "מסמך"}`, date: n > 30 ? addDays(d.relevantUntil, -30) : today(), details: `${reason} ב-${fmtDate(d.relevantUntil)}. מתוך ניירת בית.` } });
   }
@@ -127,19 +128,20 @@ function reminders() {
     if (!t.from) continue;
     const n = daysUntil(t.from);
     if (n < 0 || n > REMIND_AHEAD_DAYS) continue;
-    out.push({ ico: "✈️", days: n, tripId: t.id, title: `נסיעה: ${t.name}`, sub: `${n === 0 ? "היום" : `בעוד ${n} ימים`} · לבדוק שהדרכונים בתוקף (לפחות חצי שנה)`,
+    out.push({ key: `t:${t.id}:${t.from}`, ico: "✈️", days: n, tripId: t.id, title: `נסיעה: ${t.name}`, sub: `${n === 0 ? "היום" : `בעוד ${n} ימים`} · לבדוק שהדרכונים בתוקף (לפחות חצי שנה)`,
       cal: { title: `לבדוק דרכונים לפני ${t.name}`, date: n > 14 ? addDays(t.from, -14) : today(), details: `הנסיעה מתחילה ב-${fmtDate(t.from)}. דרכון צריך להיות בתוקף לפחות חצי שנה מיום החזרה.` } });
     const end = t.to || t.from;
     for (const d of state.docs) {
       if (!d.relevantUntil || !/דרכון/.test(`${d.title} ${d.relevantReason} ${d.details}`)) continue;
       if (d.relevantUntil < addDays(end, 183)) {
-        out.push({ ico: "⚠️", days: n - 0.5, docId: d.id, title: `דרכון${d.people?.length ? " של " + d.people.join(", ") : ""}`,
+        out.push({ key: `p:${d.id}:${t.id}`, ico: "⚠️", days: n - 0.5, docId: d.id, title: `דרכון${d.people?.length ? " של " + d.people.join(", ") : ""}`,
           sub: `בתוקף עד ${fmtDate(d.relevantUntil)}, פחות מחצי שנה אחרי הנסיעה ל${t.name}`,
           cal: { title: `לחדש דרכון${d.people?.length ? " – " + d.people.join(", ") : ""}`, date: today(), details: `הדרכון בתוקף עד ${fmtDate(d.relevantUntil)}. נסיעה ל${t.name} ב-${fmtDate(t.from)}.` } });
       }
     }
   }
-  return out.sort((a, b) => a.days - b.days);
+  const dismissed = new Set(state.settings.dismissed || []);
+  return out.filter((r) => !dismissed.has(r.key)).sort((a, b) => a.days - b.days);
 }
 const cleanupCandidates = () => state.docs.filter((d) => d.relevantUntil && !d.keep && daysUntil(d.relevantUntil) < -CLEAN_AFTER_DAYS);
 function calUrl({ title, date, details }) {
@@ -186,11 +188,12 @@ function renderHome() {
   $("remindList").innerHTML = rem.map((r, i) => `<li class="${r.days <= 14 ? "r-soon" : ""}">
     <span class="r-ico">${r.ico}</span>
     <span class="r-main"><span class="r-title">${esc(r.title)}</span><br><span class="r-sub">${esc(r.sub)}</span></span>
-    <span class="r-acts">${r.docId ? `<button class="btn btn-ghost btn-sm" data-doc="${r.docId}">פתיחה</button>` : `<button class="btn btn-ghost btn-sm" data-trip="${r.tripId}">פתיחה</button>`}<a class="btn btn-ghost btn-sm" href="${calUrl(r.cal)}" target="_blank" rel="noopener">הוסף ליומן</a></span>
+    <span class="r-acts">${r.docId ? `<button class="btn btn-ghost btn-sm" data-doc="${r.docId}">פתיחה</button>` : `<button class="btn btn-ghost btn-sm" data-trip="${r.tripId}">פתיחה</button>`}<a class="btn btn-ghost btn-sm" href="${calUrl(r.cal)}" target="_blank" rel="noopener">הוסף ליומן</a><button class="btn btn-ghost btn-sm" data-dismiss="${esc(r.key)}" title="התזכורת תיעלם">✓ טופל</button></span>
   </li>`).join("");
   const counts = {}; state.docs.forEach((d) => (counts[d.topic] = (counts[d.topic] || 0) + 1));
   $("topicGrid").innerHTML = topics().map((t) => `<button type="button" class="topic-card${counts[t] ? "" : " is-empty"}" data-topic="${esc(t)}"><span class="t-ico">${topicIcon(t)}</span><span class="t-name">${esc(t)}</span><span class="t-count">${counts[t] ? (counts[t] === 1 ? "מסמך אחד" : `${counts[t]} מסמכים`) : "אין עדיין"}</span></button>`).join("");
-  const recent = state.docs.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 6);
+  const since = Date.now() - 14 * 86400000;   // רק מה שנוסף בשבועיים האחרונים
+  const recent = state.docs.filter((d) => (d.createdAt || 0) >= since).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 6);
   $("recentList").innerHTML = recent.map(docCard).join("");
   $("recentTitle").hidden = !recent.length;
   $("homeEmpty").hidden = state.docs.length > 0;
@@ -198,6 +201,14 @@ function renderHome() {
 $("topicGrid").addEventListener("click", (e) => { const c = e.target.closest("[data-topic]"); if (!c) return; resetFilters(); $("qTopic").dataset.want = c.dataset.topic; setView("docs"); });
 $("homeSearchForm").addEventListener("submit", (e) => { e.preventDefault(); resetFilters(); $("qText").value = $("homeSearch").value; $("homeSearch").value = ""; setView("docs"); });
 $("cleanupBanner").onclick = openCleanup;
+// "טופל": התזכורת נעלמת ולא חוזרת
+$("remindList").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-dismiss]"); if (!b) return;
+  b.closest("li").remove();
+  if (!$("remindList").children.length) $("remindPanel").hidden = true;
+  await saveSettings({ dismissed: [...(state.settings.dismissed || []), b.dataset.dismiss].slice(-400) });
+  toast("התזכורת הוסרה");
+});
 document.addEventListener("click", (e) => { const t = e.target.closest("[data-trip]"); if (t && !e.target.closest("dialog")) { state.tripOpen = t.dataset.trip; setView("trips"); } });
 
 function resetFilters() { ["qText", "qFrom", "qTo"].forEach((id) => ($(id).value = "")); $("qTopic").value = ""; $("qPerson").value = ""; $("qTopic").dataset.want = ""; }
@@ -406,6 +417,18 @@ $("fab").onclick = () => openUpload();
 $("uploadDlg").addEventListener("close", () => { up.runId++; up.skipCtl?.abort(); ["inCamera", "inFile", "inCameraMore", "inFileMore"].forEach((id) => ($(id).value = "")); });
 function bindInput(id, more) { $(id).addEventListener("change", (e) => { const files = [...e.target.files]; e.target.value = ""; if (files.length) handleFiles(files, more); }); }
 bindInput("inCamera", false); bindInput("inFile", false); bindInput("inCameraMore", true); bindInput("inFileMore", true);
+// צילום: סורק עם מסגרת ירוקה. אם אין גישה למצלמה, נשארים עם המצלמה הרגילה
+let useNativeCamera = false;
+["inCamera", "inCameraMore"].forEach((id) => $(id).closest("label").addEventListener("click", async (e) => {
+  if (useNativeCamera || !scannerSupported()) return;
+  e.preventDefault();
+  let page;
+  try { page = await scanPage(); }
+  catch (err) { console.warn(err); useNativeCamera = true; toast("לא קיבלתי גישה למצלמה. לחצי שוב על הצילום כדי לצלם במצלמה הרגילה.", 4500); return; }
+  if (!page) return;
+  up.pages.push(page);
+  $("upStart").hidden = true; showStep("upCollect"); renderPageStrip();
+}));
 function handleFiles(files, more) {
   if (!more && files.length > 1) { up.pendingFiles = files; $("upMultiQ").textContent = `נבחרו ${files.length} קבצים. מה הם?`; showStep("upMulti"); return; }
   addFiles(files);
