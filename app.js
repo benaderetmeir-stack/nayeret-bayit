@@ -1,8 +1,9 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
-import { RemoteApi, DemoApi, sha256Hex } from "./api.js?v=4";
-import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=4";
-import { recognize, DEFAULT_TOPICS, addMonths } from "./ocr.js?v=4";
-import { scanPage, scannerSupported } from "./scanner.js?v=4";
+import { RemoteApi, DemoApi, sha256Hex } from "./api.js?v=5";
+import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=5";
+import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders } from "./ocr.js?v=5";
+import { exportExcel } from "./excel.js?v=5";
+import { scanPage, scannerSupported } from "./scanner.js?v=5";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -15,12 +16,22 @@ const fmtDate = (iso) => { if (!iso) return ""; const [y, m, d] = iso.split("-")
 const fmtMoney = (n) => n == null || n === "" ? "" : Number(n).toLocaleString("he-IL", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const numVal = (el) => { const v = parseFloat(String(el.value).replace(",", ".")); return Number.isFinite(v) ? Math.round(v * 100) / 100 : null; };
 
-const TOPIC_ICON = { "בריאות": "🩺", "אחריות ומוצרים": "🧾", "חשבוניות לבית": "🏠", "רכב": "🚗", "ביטוחים": "🛡️", "מסמכים אישיים": "🪪", "לימודים": "🎓", "דירה ונכס": "🔑", "חברים": "🤝", "נסיעות": "✈️", "שונות": "📁" };
+const TOPIC_ICON = { "בריאות": "🩺", "אחריות ומוצרים": "🧾", "חשבוניות לבית": "💡", "רכב": "🚗", "ביטוחים": "🛡️", "מסמכים אישיים": "🪪", "לימודים": "🎓", "דירה ונכס": "🏠", "חברים": "🤝", "נסיעות": "✈️", "שונות": "📁" };
+const TOPIC_TINT = { "בריאות": "#FDE8E8", "אחריות ומוצרים": "#FFF1E6", "חשבוניות לבית": "#FEF9C3", "רכב": "#E3EEFB", "ביטוחים": "#E3F5EC", "מסמכים אישיים": "#FEF3C7", "לימודים": "#E8F0E0", "דירה ונכס": "#F3EAFB", "חברים": "#FCE7F3", "נסיעות": "#E0F2FE", "שונות": "#F1F4F6" };
+const TOPIC_SHORT = { "אחריות ומוצרים": "אחריות", "דירה ונכס": "דירה", "מסמכים אישיים": "אישי", "חשבוניות לבית": "חשבונות הבית" };
+const PRIMARY = ["בריאות", "רכב", "ביטוחים", "אחריות ומוצרים", "דירה ונכס", "נסיעות", "מסמכים אישיים", "לימודים"];
+const SUB_ICON = { "רישיון רכב": "📄", "ביטוח": "🛡️", "טיפולים ותיקונים": "🔧", "דוחות וקנסות": "🚨", "קנייה ומכירה": "🤝", "בדיקות דם": "🩸", "הדמיה וצילומים": "🩻", "רופא משפחה": "👩‍⚕️", "רופאים מומחים": "👨‍⚕️", "עיניים": "👁️", "שיניים": "🦷", "מרשמים ותרופות": "💊", "הפניות ואישורים": "📋", "אשפוז וניתוחים": "🏥", "חיסונים": "💉", "חוזים": "📝", "משכנתא": "🏦", "שיפוצים ותיקונים": "🔨", "מיסים ואגרות": "🏛️",
+  "ביטוח דירה": "🏠", "ביטוח בריאות": "🩺", "ביטוח חיים": "❤️", "ביטוח נסיעות": "✈️", "ביטוח משכנתא": "🏦", "חשמל": "⚡", "מים": "💧", "ארנונה": "🏛️", "גז": "🔥", "אינטרנט וטלפון": "🌐", "ועד בית": "🏢" };
+const FOLDER_ICON = { "רכב": "🚙", "בריאות": "👤", "מסמכים אישיים": "👤", "לימודים": "👤", "אחריות ומוצרים": "📦", "דירה ונכס": "🏠", "חברים": "🤝" };
 const topicIcon = (t) => TOPIC_ICON[t] || "📄";
+const topicShort = (t) => TOPIC_SHORT[t] || t;
+const tint = (t) => TOPIC_TINT[t] || "#F1F4F6";
+const folderIcon = (topic, name) => SUB_ICON[name] || FOLDER_ICON[topic] || "📂";
 const CLEAN_AFTER_DAYS = 182;   // חצי שנה אחרי שהמסמך הפסיק להיות רלוונטי
 const REMIND_AHEAD_DAYS = 60;
 
-const state = { api: null, settings: {}, docs: [], thumbs: {}, view: "home", pages: new Map(), tripOpen: null };
+const state = { api: null, settings: {}, docs: [], thumbs: {}, view: "home", pages: new Map(), tripOpen: null,
+  nav: { topic: null, folder: null, sub: null, more: false }, archOpen: false, attnAll: false, sorting: false };
 
 /* ======================= הודעות ואישור ======================= */
 let toastT;
@@ -72,8 +83,12 @@ function enterApp(data) {
   state.settings = data.settings || {};
   state.docs = (data.docs || []).filter(Boolean);
   $("loginView").hidden = true; $("appView").hidden = false;
-  setView(state.view || "home");
+  setView(state.view || "home", { replace: true });
   state.api.thumbs().then((t) => { state.thumbs = t || {}; render(); }).catch((e) => console.warn("thumbs", e));
+  // קישור מהאקסל: #doc=… פותח את המסמך
+  const m = location.hash.match(/^#doc=(.+)$/);
+  if (m) { history.replaceState(null, "", location.pathname + location.search); const d = docById(decodeURIComponent(m[1])); if (d) openViewer(d); }
+  setTimeout(() => autoSort(false), 1500);
 }
 
 /* ======================= נתונים נגזרים ======================= */
@@ -87,11 +102,26 @@ const trips = () => (state.settings.trips || []).slice().sort((a, b) => (b.from 
 const tripById = (id) => (state.settings.trips || []).find((t) => t.id === id);
 const docById = (id) => state.docs.find((d) => d.id === id);
 
+// ארכיון: מה שתוקפו עבר, או שהוחלף במסמך חדש. לא נמחק, רק לא מעמיס על התיקייה
+const isArchived = (d) => !!(d.archived || d.replacedBy) || (!!d.relevantUntil && d.relevantUntil < today());
+function folderOf(d) {
+  if (d.folder) return d.folder;
+  return ruleOf(d.topic).by === "person" && d.people?.length ? d.people[0] : "";
+}
+const subOf = (d) => d.sub || "";
+const pathText = (d) => [topicShort(d.topic || ""), folderOf(d), subOf(d)].filter(Boolean).join(" › ");
+function knownFolders() {
+  const m = {};
+  state.docs.forEach((d) => { const f = folderOf(d); if (f && d.topic) (m[d.topic] ||= new Set()).add(f); });
+  return Object.fromEntries(Object.entries(m).map(([k, v]) => [k, [...v]]));
+}
+const plural = (n, one, many) => n === 1 ? one : `${n} ${many}`;
+
 const norm = (s) => String(s ?? "").toLowerCase().replace(/[֑-ׇ]/g, "").replace(/["'״׳`]/g, "").replace(/\s+/g, " ");
 function haystack(d) {
   if (d._h) return d._h;
   const t = tripById(d.tripId);
-  d._h = norm([d.title, d.topic, (d.people || []).join(" "), d.provider, d.details, d.note, d.fullText, d.relevantReason,
+  d._h = norm([d.title, d.topic, d.folder, d.sub, (d.people || []).join(" "), d.provider, d.details, d.note, d.fullText, d.relevantReason,
     t ? t.name : "", d.date, fmtDate(d.date), d.relevantUntil, fmtDate(d.relevantUntil), d.amount != null ? String(d.amount) : ""].join(" "));
   return d._h;
 }
@@ -116,7 +146,7 @@ function validity(d) {
 function reminders() {
   const out = [];
   for (const d of state.docs) {
-    if (!d.relevantUntil || d.noRemind) continue;
+    if (!d.relevantUntil || d.noRemind || d.replacedBy || d.archived) continue;
     const n = daysUntil(d.relevantUntil);
     if (n > REMIND_AHEAD_DAYS || n < -14) continue;
     const reason = d.relevantReason || "בתוקף עד";
@@ -142,7 +172,7 @@ function reminders() {
       cal: { title: `לבדוק דרכונים לפני ${t.name}`, date: n > 14 ? addDays(t.from, -14) : today(), details: `הנסיעה מתחילה ב-${fmtDate(t.from)}. דרכון צריך להיות בתוקף לפחות חצי שנה מיום החזרה.` } });
     const end = t.to || t.from;
     for (const d of state.docs) {
-      if (!d.relevantUntil || !/דרכון/.test(`${d.title} ${d.relevantReason} ${d.details}`)) continue;
+      if (!d.relevantUntil || d.replacedBy || !/דרכון/.test(`${d.title} ${d.relevantReason} ${d.details}`)) continue;
       if (d.relevantUntil < addDays(end, 183)) {
         out.push({ key: `p:${d.id}:${t.id}`, ico: "⚠️", days: n - 0.5, docId: d.id, title: `דרכון${d.people?.length ? " של " + d.people.join(", ") : ""}`,
           sub: `בתוקף עד ${fmtDate(d.relevantUntil)}, פחות מחצי שנה אחרי הנסיעה ל${t.name}`,
@@ -153,93 +183,264 @@ function reminders() {
   const dismissed = new Set(state.settings.dismissed || []);
   return out.filter((r) => !dismissed.has(r.key)).sort((a, b) => a.days - b.days);
 }
-const cleanupCandidates = () => state.docs.filter((d) => d.relevantUntil && !d.keep && daysUntil(d.relevantUntil) < -CLEAN_AFTER_DAYS);
+// "סידור הארון": מה שתוקפו נגמר לפני יותר מחצי שנה, או שהוחלף במסמך חדש
+const tidyCandidates = () => state.docs.filter((d) => !d.keep && (d.replacedBy || (d.relevantUntil && daysUntil(d.relevantUntil) < -CLEAN_AFTER_DAYS)));
 function calUrl({ title, date, details }) {
   const a = date.replace(/-/g, ""), b = addDays(date, 1).replace(/-/g, "");
   return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${a}/${b}&details=${encodeURIComponent(details || "")}`;
 }
 
 /* ======================= תצוגות ======================= */
-function setView(v) {
+// כל מעבר מסך נכנס להיסטוריה, כך שהחלקה אחורה באייפון / כפתור "חזרה" עובדים כמו באפליקציה
+function setView(v, opts = {}) {
   state.view = v;
-  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-active", t.dataset.view === v));
-  ["home", "docs", "trips", "settings"].forEach((k) => ($(k + "View").hidden = k !== v));
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-active", t.dataset.view === (v === "browse" || v === "trips" ? "home" : v)));
+  ["home", "browse", "docs", "trips", "settings"].forEach((k) => ($(k + "View").hidden = k !== v));
+  const st = { view: v, nav: { ...state.nav }, tripOpen: state.tripOpen, archOpen: state.archOpen };
+  try { if (opts.replace) history.replaceState(st, ""); else if (!opts.fromHistory) history.pushState(st, ""); } catch {}
+  if (!opts.keepScroll) window.scrollTo(0, 0);
   render();
 }
-$("tabs").addEventListener("click", (e) => { const t = e.target.closest(".tab"); if (t) { if (t.dataset.view === "trips") state.tripOpen = null; setView(t.dataset.view); } });
+window.addEventListener("popstate", (e) => {
+  const st = e.state; if (!st || $("appView").hidden) return;
+  if (document.querySelector("dialog[open]")) { document.querySelectorAll("dialog[open]").forEach((d) => d.close()); }
+  state.nav = { ...st.nav }; state.tripOpen = st.tripOpen || null; state.archOpen = !!st.archOpen;
+  setView(st.view, { fromHistory: true });
+});
+function go(nav) { state.nav = { topic: null, folder: null, sub: null, more: false, ...nav }; state.archOpen = false; setView("browse"); }
+$("tabs").addEventListener("click", (e) => {
+  const t = e.target.closest(".tab"); if (!t) return;
+  if (t.dataset.view === "docs") { resetFilters(); }
+  setView(t.dataset.view);
+});
 function render() {
   if (state.view === "home") renderHome();
+  else if (state.view === "browse") renderBrowse();
   else if (state.view === "docs") renderDocs();
   else if (state.view === "trips") renderTrips();
   else if (state.view === "settings") renderSettings();
 }
 
-function docCard(d) {
-  const v = validity(d), t = tripById(d.tripId), th = state.thumbs[d.id];
-  return `<button type="button" class="doc-card" data-doc="${d.id}">
+function docCard(d, opts = {}) {
+  const v = validity(d), t = tripById(d.tripId), th = state.thumbs[d.id], arch = isArchived(d);
+  const path = opts.path === false ? (opts.sub && subOf(d) ? subOf(d) : "") : pathText(d);
+  const ppl = (d.people || []).filter((p) => p !== folderOf(d));
+  return `<button type="button" class="doc-card${arch ? " is-arch" : ""}" data-doc="${d.id}">
     ${th ? `<img class="thumb" src="${th}" alt="">` : `<span class="thumb"></span>`}
     <span class="d-main">
       <span class="d-title">${esc(d.title || "מסמך")}</span>
-      <span class="d-meta"><span class="tag">${topicIcon(d.topic)} ${esc(d.topic || "")}</span>${(d.people || []).map((p) => `<span class="tag tag-person">${esc(p)}</span>`).join("")}${d.date ? `<span>${fmtDate(d.date)}</span>` : ""}${d.provider ? `<span>· ${esc(d.provider)}</span>` : ""}</span>
-      <span class="d-meta">${v ? `<span class="tag ${v.cls}">${esc(v.text)}</span>` : ""}${t ? `<span class="tag tag-trip">✈️ ${esc(t.name)}</span>` : ""}</span>
-      ${d.details ? `<span class="d-details">${esc(d.details)}</span>` : ""}
+      ${path ? `<span class="d-path">${opts.path === false ? folderIcon(d.topic, path) : topicIcon(d.topic)} ${esc(path)}</span>` : ""}
+      <span class="d-meta">${d.date ? `<span>${fmtDate(d.date)}</span>` : ""}${d.provider ? `<span>· ${esc(d.provider)}</span>` : ""}${ppl.map((p) => `<span class="tag tag-person">${esc(p)}</span>`).join("")}</span>
+      ${v || t || d.replacedBy ? `<span class="d-meta">${d.replacedBy ? `<span class="tag tag-old">הוחלף במסמך חדש</span>` : v ? `<span class="tag ${v.cls}">${esc(v.text)}</span>` : ""}${t ? `<span class="tag tag-trip">✈️ ${esc(t.name)}</span>` : ""}</span>` : ""}
     </span>
     ${d.amount != null ? `<span class="d-amt">₪${fmtMoney(d.amount)}</span>` : ""}
   </button>`;
 }
 document.addEventListener("click", (e) => { const c = e.target.closest("[data-doc]"); if (c && !e.target.closest("dialog")) openViewer(docById(c.dataset.doc)); });
 
+/* ----- מסך הבית: חיפוש, "דורש תשומת לב", אריחים ----- */
+const tidyDue = () => { const n = tidyCandidates().length, last = state.settings.lastTidy; return n && (!last || daysUntil(last) <= -30) ? n : 0; };
 function renderHome() {
-  const cand = cleanupCandidates();
-  const cb = $("cleanupBanner"); cb.hidden = !cand.length;
-  cb.textContent = `🧹 ${cand.length === 1 ? "מסמך אחד כבר לא רלוונטי" : `${cand.length} מסמכים כבר לא רלוונטיים`} (עברה חצי שנה). לבדוק מה למחוק ←`;
-  const rem = reminders();
-  $("remindPanel").hidden = !rem.length;
-  $("remindList").innerHTML = rem.map((r, i) => `<li class="${r.days <= 14 ? "r-soon" : ""}">
-    <span class="r-ico">${r.ico}</span>
-    <span class="r-main"><span class="r-title">${esc(r.title)}</span><br><span class="r-sub">${esc(r.sub)}</span></span>
-    <span class="r-acts">${r.docId ? `<button class="btn btn-ghost btn-sm" data-doc="${r.docId}">פתיחה</button>` : `<button class="btn btn-ghost btn-sm" data-trip="${r.tripId}">פתיחה</button>`}<a class="btn btn-ghost btn-sm" href="${calUrl(r.cal)}" target="_blank" rel="noopener">הוסף ליומן</a><button class="btn btn-ghost btn-sm" data-dismiss="${esc(r.key)}" title="התזכורת תיעלם">✓ טופל</button></span>
-  </li>`).join("");
-  const counts = {}; state.docs.forEach((d) => (counts[d.topic] = (counts[d.topic] || 0) + 1));
-  $("topicGrid").innerHTML = topics().map((t) => `<button type="button" class="topic-card${counts[t] ? "" : " is-empty"}" data-topic="${esc(t)}"><span class="t-ico">${topicIcon(t)}</span><span class="t-name">${esc(t)}</span><span class="t-count">${counts[t] ? (counts[t] === 1 ? "מסמך אחד" : `${counts[t]} מסמכים`) : "אין עדיין"}</span></button>`).join("");
-  const since = Date.now() - 14 * 86400000;   // רק מה שנוסף בשבועיים האחרונים
-  const recent = state.docs.filter((d) => (d.createdAt || 0) >= since).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 6);
-  $("recentList").innerHTML = recent.map(docCard).join("");
-  $("recentTitle").hidden = !recent.length;
+  const rem = reminders(), tidy = tidyDue();
+  const shown = state.attnAll ? rem : rem.slice(0, 3);
+  $("attnBox").hidden = !rem.length && !tidy;
+  $("attnList").innerHTML = shown.map((r) => `<li class="attn-item${r.days <= 14 ? " is-soon" : ""}" data-open="${r.docId ? "d:" + r.docId : "t:" + r.tripId}">
+      <span class="a-dot" aria-hidden="true"></span>
+      <span class="a-main"><b>${esc(r.title)}</b><small>${esc(r.sub)}</small></span>
+      <a class="a-btn" href="${calUrl(r.cal)}" target="_blank" rel="noopener" title="הוספה ליומן" aria-label="הוספה ליומן">📅</a>
+      <button type="button" class="a-btn" data-dismiss="${esc(r.key)}" title="טופל, להסיר" aria-label="טופל">✓</button>
+    </li>`).join("") + (tidy ? `<li class="attn-item is-tidy" data-open="tidy"><span class="a-ico" aria-hidden="true">🧹</span><span class="a-main"><b>סידור הארון</b><small>${plural(tidy, "מסמך ישן אחד שאפשר למחוק", "מסמכים ישנים שאפשר למחוק")}</small></span><span class="a-go">‹</span></li>` : "");
+  $("attnMore").hidden = rem.length <= 3;
+  $("attnMore").textContent = state.attnAll ? "פחות" : `עוד ${rem.length - 3} ${rem.length - 3 === 1 ? "תזכורת" : "תזכורות"}`;
+
+  const all = topics(), prim = PRIMARY.filter((t) => all.includes(t)), rest = all.filter((t) => !prim.includes(t));
+  const tile = (t) => {
+    const soon = state.docs.some((d) => d.topic === t && !isArchived(d) && d.relevantUntil && daysUntil(d.relevantUntil) <= REMIND_AHEAD_DAYS);
+    const has = state.docs.some((d) => d.topic === t);
+    return `<button type="button" class="tile${has ? "" : " is-empty"}" data-topic="${esc(t)}">${soon ? `<span class="t-dot" title="משהו מסתיים בקרוב"></span>` : ""}<span class="t-ico" style="--tint:${tint(t)}">${topicIcon(t)}</span><span class="t-name">${esc(topicShort(t))}</span><span class="t-sub">${esc(tileSub(t))}</span></button>`;
+  };
+  const restCount = state.docs.filter((d) => rest.includes(d.topic)).length;
+  $("tileGrid").innerHTML = prim.map(tile).join("") + (rest.length ? `<button type="button" class="tile" data-more="1"><span class="t-ico" style="--tint:#F1F4F6">📦</span><span class="t-name">עוד</span><span class="t-sub">${esc(rest.map(topicShort).join(", "))}</span></button>` : "");
   $("homeEmpty").hidden = state.docs.length > 0;
 }
-$("topicGrid").addEventListener("click", (e) => { const c = e.target.closest("[data-topic]"); if (!c) return; resetFilters(); $("qTopic").dataset.want = c.dataset.topic; setView("docs"); });
+function tileSub(t) {
+  const docs = state.docs.filter((d) => d.topic === t), act = docs.filter((d) => !isArchived(d));
+  if (t === "נסיעות") {
+    const next = (state.settings.trips || []).filter((x) => (x.to || x.from || "") >= today()).sort((a, b) => (a.from || "").localeCompare(b.from || ""))[0];
+    if (next) return `קרובה: ${next.name.split(",")[0]}`;
+    const n = (state.settings.trips || []).length; return n ? plural(n, "נסיעה אחת", "נסיעות") : "אין עדיין";
+  }
+  if (!docs.length) return "אין עדיין";
+  const fs = new Set(act.map(folderOf).filter(Boolean)).size;
+  if (t === "רכב" && fs) return plural(fs, "רכב אחד", "רכבים");
+  if (ruleOf(t).by === "person" && fs) return plural(fs, "אדם אחד", "אנשים");
+  if (t === "אחריות ומוצרים") return plural(act.length, "מוצר אחד בתוקף", "מוצרים בתוקף");
+  if (t === "ביטוחים") return plural(act.length, "פוליסה אחת בתוקף", "פוליסות בתוקף");
+  return act.length ? plural(act.length, "מסמך אחד", "מסמכים") : "רק בארכיון";
+}
+$("tileGrid").addEventListener("click", (e) => {
+  const c = e.target.closest("[data-topic],[data-more]"); if (!c) return;
+  if (c.dataset.more) return go({ more: true });
+  if (c.dataset.topic === "נסיעות") { state.tripOpen = null; return setView("trips"); }
+  go({ topic: c.dataset.topic });
+});
 $("homeSearchForm").addEventListener("submit", (e) => { e.preventDefault(); resetFilters(); $("qText").value = $("homeSearch").value; $("homeSearch").value = ""; setView("docs"); });
-$("cleanupBanner").onclick = openCleanup;
-// "טופל": התזכורת נעלמת ולא חוזרת
-$("remindList").addEventListener("click", async (e) => {
-  const b = e.target.closest("[data-dismiss]"); if (!b) return;
-  b.closest("li").remove();
-  if (!$("remindList").children.length) $("remindPanel").hidden = true;
-  await saveSettings({ dismissed: [...(state.settings.dismissed || []), b.dataset.dismiss].slice(-400) });
-  toast("התזכורת הוסרה");
+$("attnMore").onclick = () => { state.attnAll = !state.attnAll; renderHome(); };
+$("attnList").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-dismiss]");
+  if (b) {
+    b.closest("li").remove();
+    await saveSettings({ dismissed: [...(state.settings.dismissed || []), b.dataset.dismiss].slice(-400) });
+    toast("התזכורת הוסרה"); renderHome(); return;
+  }
+  if (e.target.closest("a")) return;
+  const li = e.target.closest("[data-open]"); if (!li) return;
+  const o = li.dataset.open;
+  if (o === "tidy") return openCleanup();
+  if (o.startsWith("d:")) return openViewer(docById(o.slice(2)));
+  if (o.startsWith("t:")) { state.tripOpen = o.slice(2); setView("trips"); }
 });
 document.addEventListener("click", (e) => { const t = e.target.closest("[data-trip]"); if (t && !e.target.closest("dialog")) { state.tripOpen = t.dataset.trip; setView("trips"); } });
 
+/* ----- תיקיות: נושא → תיקייה → בתוך התיקייה ----- */
+function groupStatus(docs) {
+  const act = docs.filter((d) => !isArchived(d));
+  const count = act.length ? plural(act.length, "מסמך אחד", "מסמכים") : `רק בארכיון (${docs.length})`;
+  const dated = act.filter((d) => d.relevantUntil).sort((a, b) => a.relevantUntil.localeCompare(b.relevantUntil));
+  if (dated.length) {
+    const d = dated[0], n = daysUntil(d.relevantUntil), why = d.relevantReason || "בתוקף עד";
+    if (n <= REMIND_AHEAD_DAYS) return { count, cls: "st-warn", text: `${why}: ${n === 0 ? "היום" : `בעוד ${n} ימים`}` };
+    if (dated.length === 1) return { count, cls: "st-ok", text: `${why} ${fmtDate(d.relevantUntil)}` };
+    return { count, cls: "st-ok", text: "הכול בתוקף" };
+  }
+  const last = act.map((d) => d.date || "").filter(Boolean).sort().pop();
+  return { count, cls: "", text: last ? `אחרון ${last.slice(5, 7)}/${last.slice(0, 4)}` : "" };
+}
+function foldCard(topic, name, docs, attrs) {
+  const st = groupStatus(docs);
+  return `<button type="button" class="fold" ${attrs}><span class="f-ico" style="--tint:${tint(topic)}">${folderIcon(topic, name)}</span><span class="f-main"><b>${esc(name)}</b><small>${esc(st.count)}${st.text ? ` · <span class="${st.cls}">${esc(st.text)}</span>` : ""}</small></span><span class="f-go" aria-hidden="true">‹</span></button>`;
+}
+const sortDocs = (list) => list.sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
+function renderBrowse() {
+  const { topic, folder, sub, more } = state.nav;
+  // שביל ניווט
+  const crumbs = [`<button type="button" class="crumb" data-crumb="home">בית</button>`];
+  if (more) crumbs.push(`<span class="crumb is-here">עוד</span>`);
+  if (topic) crumbs.push(folder != null ? `<button type="button" class="crumb" data-crumb="topic">${esc(topicShort(topic))}</button>` : `<span class="crumb is-here">${esc(topicShort(topic))}</span>`);
+  if (folder != null) crumbs.push(sub != null ? `<button type="button" class="crumb" data-crumb="folder">${esc(folder)}</button>` : `<span class="crumb is-here">${esc(folder)}</span>`);
+  if (sub != null) crumbs.push(`<span class="crumb is-here">${esc(sub)}</span>`);
+  $("crumbs").innerHTML = crumbs.join(`<span class="crumb-sep">‹</span>`);
+  $("browseRename").hidden = folder == null && sub == null;
+  $("browseExcel").hidden = !!more;
+
+  if (more) {
+    const rest = topics().filter((t) => !PRIMARY.includes(t));
+    $("browseTitle").innerHTML = `📦 עוד נושאים`;
+    $("foldList").innerHTML = rest.map((t) => { const docs = state.docs.filter((d) => d.topic === t); return `<button type="button" class="fold" data-gotopic="${esc(t)}"><span class="f-ico" style="--tint:${tint(t)}">${topicIcon(t)}</span><span class="f-main"><b>${esc(t)}</b><small>${docs.length ? esc(groupStatus(docs).count) : "אין עדיין"}</small></span><span class="f-go" aria-hidden="true">‹</span></button>`; }).join("");
+    ["looseTitle", "looseList", "archToggle", "archList", "browseEmpty"].forEach((id) => ($(id).hidden = true));
+    return;
+  }
+  const level = sub != null ? 3 : folder != null ? 2 : 1;
+  $("browseTitle").innerHTML = `${level === 1 ? topicIcon(topic) : folderIcon(topic, level === 2 ? folder : sub)} ${esc(level === 1 ? topic : level === 2 ? folder : sub)}`;
+  const inHere = state.docs.filter((d) => d.topic === topic && (folder == null || folderOf(d) === folder) && (sub == null || subOf(d) === sub));
+  const act = inHere.filter((d) => !isArchived(d)), arch = inHere.filter(isArchived);
+  // קבוצות: ברמת הנושא לפי תיקייה, בתוך תיקייה לפי "סוג"
+  const keyOf = level === 1 ? folderOf : level === 2 ? subOf : () => "";
+  const groups = new Map();
+  inHere.forEach((d) => { const k = keyOf(d); if (k) (groups.get(k) || groups.set(k, []).get(k)).push(d); });
+  // תיקייה עם מעט מסמכים וסוג אחד בלבד: מראים ישר את המסמכים, בלי עוד שכבה
+  const flat = level === 2 && (groups.size <= 1 || inHere.length <= 3);
+  // תיקייה שכל המסמכים בה כבר בארכיון לא מוצגת כאן (היא בארכיון למטה)
+  const groupList = flat ? [] : [...groups.entries()].filter(([, docs]) => docs.some((d) => !isArchived(d))).sort((a, b) => {
+    const aa = a[1].some((d) => !isArchived(d)), bb = b[1].some((d) => !isArchived(d));
+    return (bb - aa) || a[0].localeCompare(b[0], "he");
+  });
+  const attr = (k) => level === 1 ? `data-gofolder="${esc(k)}"` : `data-gosub="${esc(k)}"`;
+  $("foldList").innerHTML = groupList.map(([k, docs]) => foldCard(topic, k, docs, attr(k))).join("");
+  $("foldList").hidden = !groupList.length;
+  const loose = sortDocs(act.filter((d) => flat || !keyOf(d)));
+  $("looseList").innerHTML = loose.map((d) => docCard(d, { path: false, sub: level === 2 })).join("");
+  $("looseList").hidden = !loose.length;
+  $("looseTitle").hidden = !loose.length || !groupList.length;
+  $("looseTitle").textContent = level === 1 ? "בלי תיקייה" : "מסמכים";
+  $("archToggle").hidden = !arch.length;
+  $("archToggle").textContent = `🗄 ארכיון (${plural(arch.length, "מסמך ישן אחד", "מסמכים ישנים")}) ${state.archOpen ? "▴" : "▾"}`;
+  $("archList").hidden = !state.archOpen || !arch.length;
+  $("archList").innerHTML = state.archOpen ? sortDocs(arch.slice()).map((d) => docCard(d, { path: level < 3 })).join("") : "";
+  $("browseEmpty").hidden = inHere.length > 0;
+}
+$("browseView").addEventListener("click", (e) => {
+  const c = e.target.closest("[data-crumb],[data-gotopic],[data-gofolder],[data-gosub]"); if (!c) return;
+  const n = state.nav;
+  if (c.dataset.crumb === "home") return setView("home");
+  if (c.dataset.crumb === "topic") return go({ topic: n.topic });
+  if (c.dataset.crumb === "folder") return go({ topic: n.topic, folder: n.folder });
+  if (c.dataset.gotopic) return c.dataset.gotopic === "נסיעות" ? (state.tripOpen = null, setView("trips")) : go({ topic: c.dataset.gotopic });
+  if (c.dataset.gofolder != null) return go({ topic: n.topic, folder: c.dataset.gofolder });
+  if (c.dataset.gosub != null) return go({ topic: n.topic, folder: n.folder, sub: c.dataset.gosub });
+});
+$("archToggle").onclick = () => { state.archOpen = !state.archOpen; try { history.replaceState({ ...history.state, archOpen: state.archOpen }, ""); } catch {} renderBrowse(); };
+$("browseExcel").onclick = () => {
+  const { topic, folder, sub } = state.nav;
+  const docs = state.docs.filter((d) => d.topic === topic && (folder == null || folderOf(d) === folder) && (sub == null || subOf(d) === sub));
+  if (!docs.length) return toast("אין כאן מסמכים");
+  runExcel(docs, [topic, folder, sub].filter((x) => x != null).join(" › "));
+};
+// שינוי שם של תיקייה (או איחוד עם תיקייה קיימת)
+$("browseRename").onclick = () => {
+  const { sub, folder } = state.nav;
+  $("rnName").value = sub != null ? sub : folder;
+  $("rnTitle").textContent = sub != null ? "שינוי שם" : "שינוי שם התיקייה";
+  $("rnList").innerHTML = (sub != null ? [...new Set(state.docs.filter((d) => d.topic === state.nav.topic).map(subOf).filter(Boolean))] : (knownFolders()[state.nav.topic] || [])).map((x) => `<option value="${esc(x)}">`).join("");
+  $("renameDlg").showModal(); setTimeout(() => $("rnName").select(), 30);
+};
+$("rnSave").onclick = async () => {
+  const name = $("rnName").value.replace(/\s+/g, " ").trim(); if (!name) return toast("חסר שם");
+  const { topic, folder, sub } = state.nav;
+  const list = state.docs.filter((d) => d.topic === topic && folderOf(d) === folder && (sub == null || subOf(d) === sub));
+  $("rnSave").disabled = true;
+  try {
+    for (const d of list) { const patch = sub != null ? { sub: name } : { folder: name }; await state.api.saveDoc({ id: d.id, ...patch }); Object.assign(d, patch); delete d._h; }
+    $("renameDlg").close(); toast("השם עודכן");
+    state.nav = sub != null ? { ...state.nav, sub: name } : { ...state.nav, folder: name };
+    try { history.replaceState({ ...history.state, nav: { ...state.nav } }, ""); } catch {}
+    renderBrowse();
+  } catch (e) { console.error(e); toast("השמירה נכשלה, נסי שוב", 4000); }
+  finally { $("rnSave").disabled = false; }
+};
+
+/* ----- חיפוש ----- */
 function resetFilters() { ["qText", "qFrom", "qTo"].forEach((id) => ($(id).value = "")); $("qTopic").value = ""; $("qPerson").value = ""; $("qTopic").dataset.want = ""; }
 function renderDocs() {
   const sel = (el, list, all) => { const want = el.dataset.want || el.value; el.innerHTML = `<option value="">${all}</option>` + list.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join(""); el.value = list.includes(want) ? want : ""; el.dataset.want = ""; };
   sel($("qTopic"), topics(), "כל הנושאים");
   sel($("qPerson"), people(), "כל האנשים");
   const q = $("qText").value.trim(), tp = $("qTopic").value, pr = $("qPerson").value, from = $("qFrom").value, to = $("qTo").value;
-  let rows = state.docs.filter((d) => (!tp || d.topic === tp) && (!pr || (d.people || []).includes(pr)) && (!from || (d.date || "") >= from) && (!to || (d.date || "") <= to) && (!q || matches(d, q)));
-  rows.sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
   const any = q || tp || pr || from || to;
-  $("resultCount").textContent = any ? (rows.length === 1 ? "נמצא מסמך אחד" : rows.length ? `נמצאו ${rows.length} מסמכים` : "לא נמצאו מסמכים שמתאימים לחיפוש") : (rows.length === 1 ? "מסמך אחד" : `${rows.length} מסמכים`);
-  $("docList").innerHTML = rows.map(docCard).join("");
+  $("qFilterBtn").classList.toggle("is-on", !!(tp || pr || from || to));
+  if (!any) {
+    // בלי חיפוש: מה שנוסף בשבועיים האחרונים
+    const since = Date.now() - 14 * 86400000;
+    const recent = state.docs.filter((d) => (d.createdAt || 0) >= since).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 12);
+    $("resultCount").textContent = recent.length ? "נוספו לאחרונה" : "כתבי מה לחפש: שם, רופא, מוצר, מספר פוליסה, מילה מתוך המסמך…";
+    $("docList").innerHTML = recent.map((d) => docCard(d)).join("");
+    return;
+  }
+  const rows = sortDocs(state.docs.filter((d) => (!tp || d.topic === tp) && (!pr || (d.people || []).includes(pr) || folderOf(d) === pr) && (!from || (d.date || "") >= from) && (!to || (d.date || "") <= to) && (!q || matches(d, q))));
+  // בתוקף קודם, ארכיון בסוף
+  rows.sort((a, b) => isArchived(a) - isArchived(b));
+  $("resultCount").textContent = rows.length === 1 ? "נמצא מסמך אחד" : rows.length ? `נמצאו ${rows.length} מסמכים` : "לא נמצאו מסמכים שמתאימים לחיפוש";
+  $("docList").innerHTML = rows.map((d) => docCard(d)).join("");
 }
 let qT; $("qText").addEventListener("input", () => { clearTimeout(qT); qT = setTimeout(renderDocs, 250); });
 ["qTopic", "qPerson", "qFrom", "qTo"].forEach((id) => $(id).addEventListener("change", renderDocs));
 $("qClear").onclick = () => { resetFilters(); renderDocs(); };
+$("qFilterBtn").onclick = () => { $("qFilters").hidden = !$("qFilters").hidden; };
 
 /* ======================= נסיעות ======================= */
 function renderTrips() {
   const open = state.tripOpen && tripById(state.tripOpen);
+  $("tripCrumbs").innerHTML = `<button type="button" class="crumb" data-crumb="home">בית</button><span class="crumb-sep">‹</span>${open ? `<button type="button" class="crumb" data-crumb="trips">נסיעות</button><span class="crumb-sep">‹</span><span class="crumb is-here">${esc(open.name)}</span>` : `<span class="crumb is-here">נסיעות</span>`}`;
   $("tripList").hidden = !!open; $("tripDetail").hidden = !open; $("tripNew").hidden = !!open;
   if (open) {
     const docs = state.docs.filter((d) => d.tripId === open.id).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
@@ -254,7 +455,8 @@ function renderTrips() {
     return `<button type="button" class="trip-card${past ? " is-past" : ""}" data-trip="${t.id}"><span class="tr-name">✈️ ${esc(t.name)}</span><span class="tr-dates">${fmtDate(t.from)}${t.to && t.to !== t.from ? " – " + fmtDate(t.to) : ""}</span><span class="hint">${n === 1 ? "מסמך אחד" : `${n} מסמכים`}</span></button>`;
   }).join("") : `<div class="empty"><p>עוד אין נסיעות. כשמעלים כרטיס טיסה, הזמנת מלון או ביטוח נסיעות, המערכת יוצרת נסיעה לבד.</p></div>`;
 }
-$("tripBack").onclick = () => { state.tripOpen = null; renderTrips(); };
+$("tripBack").onclick = () => { state.tripOpen = null; setView("trips"); };
+$("tripCrumbs").addEventListener("click", (e) => { const c = e.target.closest("[data-crumb]"); if (!c) return; if (c.dataset.crumb === "home") setView("home"); else { state.tripOpen = null; setView("trips"); } });
 $("tripNew").onclick = () => openTripDlg(null);
 let tripEditing = null;
 function openTripDlg(t) {
@@ -308,6 +510,13 @@ $("sPwSave").onclick = async () => {
   try { const k = await sha256Hex(a); await state.api.setPassword(k); state.api.k = k; lsSet("nb_k", k); $("sPw1").value = $("sPw2").value = ""; toast("הסיסמה הוחלפה"); }
   catch (e) { console.error(e); toast("ההחלפה נכשלה, נסי שוב", 4000); }
 };
+$("sTidy").onclick = () => { if (!tidyCandidates().length) return toast("הארון מסודר. אין כרגע מסמכים ישנים להצעה."); openCleanup(); };
+$("sExcel").onclick = () => { if (!state.docs.length) return toast("עוד אין מסמכים"); runExcel(state.docs, ""); };
+$("sResort").onclick = async () => {
+  if (!state.settings.geminiKey) return toast("צריך מפתח זיהוי כדי לסדר מחדש");
+  if (!(await confirmBox("לסדר מחדש את כל המסמכים לתיקיות? שמות תיקיות ששינית ידנית עלולים להשתנות.", "לסדר מחדש", false))) return;
+  autoSort(true);
+};
 $("sLogout").onclick = () => { lsSet("nb_k", ""); state.api.k = ""; state.docs = []; state.thumbs = {}; showLogin(); };
 
 /* ======================= צפייה במסמך ======================= */
@@ -322,7 +531,8 @@ async function openViewer(d) {
   $("vwTitle").textContent = d.title || "מסמך";
   const v = validity(d), t = tripById(d.tripId);
   $("vwMeta").innerHTML = [
-    `<span>${topicIcon(d.topic)} <b>${esc(d.topic || "")}</b></span>`,
+    `<span>${topicIcon(d.topic)} <b>${esc([d.topic, folderOf(d), subOf(d)].filter(Boolean).join(" › "))}</b></span>`,
+    isArchived(d) ? `<span class="tag tag-old">בארכיון${d.replacedBy ? " · הוחלף במסמך חדש" : ""}</span>` : "",
     d.people?.length ? `<span>של: <b>${esc(d.people.join(", "))}</b></span>` : "",
     d.date ? `<span>תאריך: <b>${fmtDate(d.date)}</b></span>` : "",
     d.provider ? `<span>גורם: <b>${esc(d.provider)}</b></span>` : "",
@@ -387,14 +597,16 @@ $("vwDelete").onclick = async () => {
 const cleanChoice = new Map();
 function openCleanup() {
   cleanChoice.clear();
-  const list = cleanupCandidates().sort((a, b) => a.relevantUntil.localeCompare(b.relevantUntil));
+  const list = tidyCandidates().sort((a, b) => (a.relevantUntil || "9").localeCompare(b.relevantUntil || "9"));
   $("cleanList").innerHTML = list.map((d) => `<li data-cid="${d.id}">
-    <span class="c-main"><span class="c-title">${topicIcon(d.topic)} ${esc(d.title || "מסמך")}</span><br><span class="c-sub">${esc(d.relevantReason || "רלוונטי עד")} ${fmtDate(d.relevantUntil)}${d.people?.length ? " · " + esc(d.people.join(", ")) : ""}</span></span>
+    <span class="c-main"><span class="c-title">${topicIcon(d.topic)} ${esc(d.title || "מסמך")}</span><br><span class="c-sub">${esc(pathText(d))} · ${d.replacedBy ? "הוחלף במסמך חדש" : `${esc(d.relevantReason || "רלוונטי עד")} ${fmtDate(d.relevantUntil)}`}</span></span>
     <button class="btn btn-ghost btn-sm" data-cview="${d.id}">צפייה</button>
     <span class="seg-mini"><button type="button" data-c="del">למחוק</button><button type="button" data-c="keep">לשמור</button></span>
   </li>`).join("");
   $("cleanDlg").showModal();
 }
+// "אחר כך": לא להציע שוב החודש
+$("cleanDlg").addEventListener("close", () => { if (state.settings.lastTidy !== today()) saveSettings({ lastTidy: today() }).then(() => state.view === "home" && renderHome()); });
 $("cleanList").addEventListener("click", (e) => {
   const v = e.target.closest("[data-cview]"); if (v) { openViewer(docById(v.dataset.cview)); return; }
   const b = e.target.closest("[data-c]"); if (!b) return;
@@ -410,6 +622,7 @@ $("cleanGo").onclick = async () => {
   try {
     if (del.length) { await state.api.deleteDocs(del); state.docs = state.docs.filter((d) => !del.includes(d.id)); }
     for (const id of keep) { const d = docById(id); if (d) { d.keep = true; await state.api.saveDoc({ id, keep: true }); } }
+    await saveSettings({ lastTidy: today() });
     $("cleanDlg").close(); toast(`${del.length ? `נמחקו ${del.length}` : ""}${del.length && keep.length ? " · " : ""}${keep.length ? `נשמרו ${keep.length}` : ""}`); render();
   } catch (e) { console.error(e); toast("הפעולה נכשלה, נסי שוב", 4000); }
 };
@@ -496,7 +709,7 @@ async function startBatch(groups) {
   const text = () => `${n > 1 ? `מזהה ${n} מסמכים… ${done} מוכנים` : "מזהה את המסמך…"} · ${Math.round((Date.now() - t0) / 1000)} שניות`;
   $("upBusyText").textContent = text();
   const tick = setInterval(() => { $("upBusyText").textContent = text(); if (Date.now() - t0 >= 15000) $("upSkipBox").hidden = false; }, 1000);
-  const ctx = { topics: topics(), people: people(), today: today() };
+  const ctx = { topics: topics(), people: people(), today: today(), folders: knownFolders() };
   let next = 0;
   const worker = async () => {
     while (next < n) {
@@ -542,13 +755,17 @@ $("rvDrop").onclick = () => { const d = up.batch.drafts[up.batch.i]; d.drop = !d
 
 // טופס האישור כאובייקט פשוט: קל לשמור ולהחזיר בדפדוף
 function formFromDoc(d) {
-  return { title: d.title || "", topic: d.topic || "", people: (d.people || []).join(", "), date: d.date || "", provider: d.provider || "", amount: d.amount ?? "",
+  return { title: d.title || "", topic: d.topic || "", folder: d.folder || (d.id ? folderOf(d) : ""), sub: d.sub || "", people: (d.people || []).join(", "), date: d.date || "", provider: d.provider || "", amount: d.amount ?? "",
     until: d.relevantUntil || "", reason: d.relevantReason || "", details: d.details || "", note: d.note || "", fullText: d.fullText || "", tripId: d.tripId || "", tripNew: null,
     remindSel: d.remindAt ? "date" : "", remindDate: d.remindAt || "", remindText: d.remindText || "" };
 }
 function formFromResult(r) {
   const f = formFromDoc({ ...r, people: (r.people || []).map(matchPerson) });
   if (!f.topic && r.trip) f.topic = "נסיעות";
+  // תיקייה: אם זו תיקייה שכבר קיימת בכתיב קצת אחר, לוקחים את הקיימת
+  const rule = ruleOf(f.topic);
+  if (rule.by === "person") f.folder = f.folder ? matchPerson(f.folder) : ((r.people || []).map(matchPerson)[0] || "");
+  if (f.folder) { const hit = (knownFolders()[f.topic] || []).find((x) => norm(x) === norm(f.folder)); if (hit) f.folder = hit; }
   // נסיעה: לחבר לנסיעה קיימת שהתאריכים שלה מתאימים, או להציע נסיעה חדשה
   const tr = r.trip;
   if (tr || f.topic === "נסיעות") {
@@ -593,6 +810,7 @@ function fillForm(f, rec) {
   const r = $("rvRecog");
   if (rec) { r.hidden = false; r.textContent = rec.ok ? "זיהיתי את הפרטים הבאים. בדקי, תקני במידת הצורך ואשרי." : rec.message; } else r.hidden = true;
   $("rvTitle").value = f.title; setTopicOptions(f.topic); $("rvTopicNew").value = f.topicNew || "";
+  $("rvFolder").value = f.folder || ""; $("rvSub").value = f.sub || ""; syncFolderUi();
   $("rvPeople").value = f.people; $("rvDate").value = f.date; $("rvProvider").value = f.provider; $("rvAmount").value = f.amount;
   $("rvUntil").value = f.until; $("rvReason").value = f.reason; $("rvDetails").value = f.details; $("rvNote").value = f.note;
   $("rvFullText").textContent = f.fullText || "(אין)"; up.fullText = f.fullText || "";
@@ -602,7 +820,7 @@ function fillForm(f, rec) {
   $("peopleList").innerHTML = people().map((p) => `<option value="${esc(p)}">`).join("");
 }
 function getForm() {
-  return { title: $("rvTitle").value.trim(), topic: $("rvTopic").value, topicNew: $("rvTopicNew").value.trim(), people: $("rvPeople").value, date: $("rvDate").value,
+  return { title: $("rvTitle").value.trim(), topic: $("rvTopic").value, topicNew: $("rvTopicNew").value.trim(), folder: $("rvFolder").value.replace(/\s+/g, " ").trim(), sub: $("rvSub").value.replace(/\s+/g, " ").trim(), people: $("rvPeople").value, date: $("rvDate").value,
     provider: $("rvProvider").value.trim(), amount: $("rvAmount").value, until: $("rvUntil").value, reason: $("rvReason").value.trim(), details: $("rvDetails").value.trim(),
     note: $("rvNote").value.trim(), fullText: up.fullText || "", tripId: $("rvTrip").value, tripNew: up.tripNew,
     remindSel: $("rvRemindSel").value, remindDate: $("rvRemindDate").value, remindText: $("rvRemindText").value.trim() };
@@ -610,7 +828,26 @@ function getForm() {
 $("rvTopic").addEventListener("change", () => {
   const o = $("rvTopic").value === OTHER_TOPIC; $("rvTopicNewBox").hidden = !o; if (o) setTimeout(() => $("rvTopicNew").focus(), 30);
   const f = getForm(); setTripOptions({ ...f, topic: f.topic });
+  syncFolderUi();
 });
+// שדות התיקייה משתנים לפי הנושא: "איזה רכב" + "סוג", "של מי", "מוצר"…
+function syncFolderUi() {
+  const tp = $("rvTopic").value, r = tp === OTHER_TOPIC ? { label: "תיקייה" } : ruleOf(tp);
+  const show = !!r.label;
+  $("rvFolderBox").hidden = !show;
+  $("rvSubBox").hidden = !show || !(r.subs || r.subLabel);
+  if (!show) return;
+  $("rvFolderLbl").textContent = `📂 ${r.label}`;
+  $("rvFolder").placeholder = r.hint || (r.by === "person" ? "שם" : "");
+  const known = tp === OTHER_TOPIC ? [] : (knownFolders()[tp] || []);
+  const opts = [...new Set([...(r.fixed || []), ...known, ...(r.by === "person" ? people() : [])])];
+  $("folderList").innerHTML = opts.map((x) => `<option value="${esc(x)}">`).join("");
+  $("rvSubLbl").textContent = r.subLabel || "סוג";
+  const subs = [...new Set([...(r.subs || []), ...state.docs.filter((d) => d.topic === tp).map(subOf).filter(Boolean)])];
+  $("subList").innerHTML = subs.map((x) => `<option value="${esc(x)}">`).join("");
+}
+// בנושאים לפי אדם: אם אין עדיין תיקייה, השם הראשון ב"של מי"
+$("rvPeople").addEventListener("change", () => { if (ruleOf($("rvTopic").value).by === "person" && !$("rvFolder").value) $("rvFolder").value = matchPerson($("rvPeople").value.split(/[,،]/)[0].trim()); });
 // אחריות: אם יש תאריך קנייה ואין "רלוונטי עד", מציעים שנה
 $("rvDate").addEventListener("change", () => {
   if ($("rvTopic").value === "אחריות ומוצרים" && $("rvDate").value && !$("rvUntil").value) { $("rvUntil").value = addMonths($("rvDate").value, 12); if (!$("rvReason").value) $("rvReason").value = "סוף אחריות"; }
@@ -636,7 +873,10 @@ function formToDoc(f) {
   const title = f.title || `${topic}${f.provider ? " – " + f.provider : ""}${f.date ? " " + fmtDate(f.date) : ""}`;
   const remindAt = remindDateOf(f);
   if (f.remindSel === "date" && !remindAt) { toast("חסר תאריך לתזכורת"); $("rvRemindDate").focus(); return null; }
-  return { title, topic, people: ppl, date: f.date, provider: f.provider, amount, relevantUntil: f.until, relevantReason: f.until ? (f.reason || "בתוקף עד") : "",
+  let folder = f.folder || "";
+  if (!folder && ruleOf(topic).by === "person" && ppl.length) folder = ppl[0];
+  if (ruleOf(topic).trips) folder = "";
+  return { title, topic, folder, sub: folder ? (f.sub || "") : (ruleOf(topic).label ? f.sub || "" : ""), people: ppl, date: f.date, provider: f.provider, amount, relevantUntil: f.until, relevantReason: f.until ? (f.reason || "בתוקף עד") : "",
     details: f.details, note: f.note, fullText: f.fullText, tripId: f.tripId, remindAt, remindText: remindAt ? f.remindText : "" };
 }
 // "הזכר לי": בעוד שבוע / חודש / שנה, או תאריך מסוים
@@ -734,6 +974,7 @@ $("upReview").addEventListener("submit", async (e) => {
   if (!todo.length) { $("uploadDlg").close(); return; }
   btn.disabled = true;
   let saved = 0;
+  const savedDocs = [];
   try {
     for (const { d, doc, tripNew } of todo) {
       btn.textContent = todo.length > 1 ? `שומר ${saved + 1} מתוך ${todo.length}…` : "שומר…";
@@ -741,7 +982,7 @@ $("upReview").addEventListener("submit", async (e) => {
       const thumb = await makeThumb(d.pages[0], 180);
       const res = await state.api.saveDoc(doc, d.pages, thumb);
       state.docs.push(res); state.thumbs[res.id] = thumb; state.pages.set(res.id, d.pages);
-      d.saved = true; saved++;
+      d.saved = true; saved++; savedDocs.push(res);
     }
   } catch (err) {
     console.error(err);
@@ -749,9 +990,79 @@ $("upReview").addEventListener("submit", async (e) => {
     btn.disabled = false; renderBatchNav(); render(); return;
   }
   btn.disabled = false;
-  toast(saved > 1 ? `נשמרו ${saved} מסמכים` : "נשמר");
+  toast(saved > 1 ? `נשמרו ${saved} מסמכים` : `נשמר ב: ${pathText(savedDocs[0])}`, 3500);
   up.batch = null; $("uploadDlg").close(); render();
+  await offerReplace(savedDocs);
 });
+
+// מסמך חדש שמחליף מסמך קודם (ביטוח חדש לאותו רכב, דרכון חדש…): מציעים למחוק את הקודם או להעביר לארכיון
+function findReplaced(doc) {
+  if (!doc.relevantUntil) return null;
+  const tw = words(doc.title.replace(/[\d\/.\-–]+/g, " "));
+  return state.docs.find((o) => {
+    if (o.id === doc.id || o.replacedBy || o.archived || !o.relevantUntil || o.relevantUntil >= doc.relevantUntil) return false;
+    if (o.topic !== doc.topic || folderOf(o) !== folderOf(doc) || subOf(o) !== subOf(doc)) return false;
+    if (!folderOf(doc) && !subOf(doc) && norm(o.provider) !== norm(doc.provider)) return false;
+    if (o.relevantReason && o.relevantReason === doc.relevantReason) return true;
+    const ow = words(o.title.replace(/[\d\/.\-–]+/g, " ")); let both = 0; tw.forEach((w) => ow.has(w) && both++);
+    return tw.size && both / Math.max(tw.size, ow.size) >= 0.5;
+  }) || null;
+}
+async function offerReplace(newDocs) {
+  for (const doc of newDocs) {
+    const old = findReplaced(doc); if (!old) continue;
+    const ans = await confirmBox(`נכנס מסמך חדש: "${doc.title}".\nיש כבר את הקודם: "${old.title}" (${old.relevantReason || "בתוקף עד"} ${fmtDate(old.relevantUntil)}).\nמה לעשות עם הקודם?`, "למחוק את הקודם", true, "להעביר לארכיון");
+    try {
+      if (ans) { await state.api.deleteDocs([old.id]); state.docs = state.docs.filter((x) => x.id !== old.id); toast("המסמך הקודם נמחק"); }
+      else { await state.api.saveDoc({ id: old.id, replacedBy: doc.id }); old.replacedBy = doc.id; toast("המסמך הקודם עבר לארכיון"); }
+    } catch (e) { console.error(e); toast("הפעולה נכשלה, נסי שוב", 4000); }
+    render();
+  }
+}
+
+/* ======================= סידור לתיקיות של מסמכים קיימים ======================= */
+async function autoSort(all) {
+  if (state.sorting) return;
+  const todo = state.docs.filter((d) => all || d.folder === undefined);
+  if (!todo.length) return;
+  state.sorting = true;
+  try {
+    let results = [];
+    if ((state.settings.geminiKey || "").trim()) {
+      if (all || todo.length > 3) toast("מסדר את המסמכים לתיקיות… אפשר להמשיך לעבוד", 3500);
+      for (let i = 0; i < todo.length; i += 25) {
+        const chunk = todo.slice(i, i + 25).map((d) => ({ id: d.id, title: d.title || "", topic: d.topic || "", people: d.people || [], provider: d.provider || "", details: d.details || "", until: d.relevantReason || "", text: String(d.fullText || "").slice(0, 400) }));
+        const r = await classifyFolders(chunk, state.settings, { topics: topics(), people: people(), folders: all ? {} : knownFolders() });
+        if (!r) break;   // לא הצליח עכשיו: ננסה שוב בכניסה הבאה
+        results.push(...r);
+      }
+    } else {
+      // בלי מפתח: לפחות מה שאפשר לבד (בריאות, מסמכים אישיים ולימודים לפי אדם)
+      results = todo.map((d) => ({ id: d.id, topic: d.topic, folder: ruleOf(d.topic).by === "person" ? (d.people?.[0] || "") : "", sub: "" }));
+    }
+    let n = 0;
+    for (const r of results) {
+      const d = docById(r.id); if (!d) continue;
+      const patch = { folder: r.folder || "", sub: r.folder ? r.sub || "" : "" };
+      if (r.topic && r.topic !== d.topic && topics().includes(r.topic)) patch.topic = r.topic;
+      if (ruleOf(patch.topic || d.topic).trips) { patch.folder = ""; patch.sub = ""; }
+      if (!patch.folder && ruleOf(patch.topic || d.topic).by === "person" && d.people?.length) patch.folder = d.people[0];
+      try { await state.api.saveDoc({ id: d.id, ...patch }); Object.assign(d, patch); delete d._h; n++; }
+      catch (e) { console.warn("autoSort", e); break; }
+    }
+    if (n && (all || results.some((r) => r.folder))) toast(`סידרתי ${plural(n, "מסמך אחד", "מסמכים")} לתיקיות`, 3500);
+    if (n) render();
+  } finally { state.sorting = false; }
+}
+
+/* ======================= אקסל ======================= */
+async function runExcel(docs, scope) {
+  toast("מכין אקסל…", 6000);
+  try {
+    const f = await exportExcel(docs, { scope, appUrl: location.origin + location.pathname, folderOf, subOf, isArchived, trips: state.settings.trips || [], topicsOrder: topics() });
+    downloadBlob(f.blob, f.name); toast("האקסל ירד");
+  } catch (e) { console.error(e); toast("לא הצלחתי להכין אקסל. בדקי חיבור ונסי שוב.", 4500); }
+}
 
 /* ======================= מצב תצוגה: מסמכים לדוגמה ======================= */
 function sampleImage(title, lines) {
@@ -765,19 +1076,34 @@ function sampleImage(title, lines) {
 async function seedDemo() {
   const t = today(), ago = (n) => addDays(t, -n), ahead = (n) => addDays(t, n);
   await state.api.saveSettings({ people: ["עינבר", "מאיר", "נועה"], trips: [{ id: "t1", name: "רומא, " + monthName(ahead(35)), from: ahead(35), to: ahead(41) }] });
+  const car1 = "מאזדה 3 · 12-345-67", car2 = "טויוטה יאריס · 98-765-43";
   const items = [
-    { title: "בדיקת דם – ספירה מלאה", topic: "בריאות", people: ["עינבר"], date: ago(20), provider: "מכבי שירותי בריאות", details: "ספירת דם, ברזל, ויטמין D", fullText: "ספירת דם מלאה המוגלובין 13.2 ברזל ויטמין D רופאת משפחה ד״ר לוי" },
-    { title: "הפניה לרופא עור", topic: "בריאות", people: ["נועה"], date: ago(10), provider: "ד״ר לוי", relevantUntil: ahead(80), relevantReason: "תוקף ההפניה" },
-    { title: "אחריות מקרר סמסונג", topic: "אחריות ומוצרים", people: [], date: ago(340), provider: "מחסני חשמל", amount: 6490, relevantUntil: ahead(25), relevantReason: "סוף אחריות", details: "מקרר RF50 4 דלתות", fullText: "סמסונג מקרר 4 דלתות דגם RF50 אחריות שנה מחסני חשמל" },
-    { title: "פוליסת ביטוח רכב", topic: "ביטוחים", people: ["מאיר"], date: ago(300), provider: "הראל", amount: 4200, relevantUntil: ahead(65), relevantReason: "סוף הפוליסה", details: "פוליסה 88231 · מקיף + חובה" },
+    { title: "בדיקת דם – ספירה מלאה", topic: "בריאות", folder: "עינבר", sub: "בדיקות דם", people: ["עינבר"], date: ago(20), provider: "מכבי שירותי בריאות", details: "ספירת דם, ברזל, ויטמין D", fullText: "ספירת דם מלאה המוגלובין 13.2 ברזל ויטמין D רופאת משפחה ד״ר לוי" },
+    { title: "בדיקת דם – שומנים", topic: "בריאות", folder: "עינבר", sub: "בדיקות דם", people: ["עינבר"], date: ago(200), provider: "מכבי שירותי בריאות" },
+    { title: "בדיקת ראייה", topic: "בריאות", folder: "עינבר", sub: "עיניים", people: ["עינבר"], date: ago(90), provider: "אופטיקה הלפרין", details: "מינוס 1.25 בשתי העיניים" },
+    { title: "הפניה לרופא עור", topic: "בריאות", folder: "נועה", sub: "הפניות ואישורים", people: ["נועה"], date: ago(10), provider: "ד״ר לוי", relevantUntil: ahead(80), relevantReason: "תוקף ההפניה" },
+    { title: "סיכום ביקור אורתופד", topic: "בריאות", folder: "מאיר", sub: "רופאים מומחים", people: ["מאיר"], date: ago(45), provider: "ד״ר כהן" },
+    { title: "רישיון רכב", topic: "רכב", folder: car1, sub: "רישיון רכב", people: ["מאיר"], date: ago(200), provider: "משרד התחבורה", amount: 1290, relevantUntil: ahead(165), relevantReason: "תוקף הרישיון" },
+    { title: "פוליסת ביטוח רכב – מקיף וחובה", topic: "רכב", folder: car1, sub: "ביטוח", people: ["מאיר"], date: ago(353), provider: "הראל", amount: 4200, relevantUntil: ahead(12), relevantReason: "סוף הפוליסה", details: "פוליסה 88231 · מקיף + חובה" },
+    { title: "טיפול 60,000 ק״מ", topic: "רכב", folder: car1, sub: "טיפולים ותיקונים", date: ago(70), provider: "מוסך דוד", amount: 1850 },
+    { title: "החלפת צמיגים", topic: "רכב", folder: car1, sub: "טיפולים ותיקונים", date: ago(400), provider: "צמיגי השרון", amount: 2400 },
+    { title: "רישיון רכב", topic: "רכב", folder: car2, sub: "רישיון רכב", people: ["עינבר"], date: ago(100), provider: "משרד התחבורה", amount: 1100, relevantUntil: ahead(265), relevantReason: "תוקף הרישיון" },
+    { title: "ביטוח חובה", topic: "רכב", folder: car2, sub: "ביטוח", people: ["עינבר"], date: ago(100), provider: "ביטוח ישיר", amount: 1650, relevantUntil: ahead(265), relevantReason: "סוף הפוליסה" },
+    { title: "אחריות מקרר סמסונג", topic: "אחריות ומוצרים", folder: "מקרר סמסונג", people: [], date: ago(340), provider: "מחסני חשמל", amount: 6490, relevantUntil: ahead(25), relevantReason: "סוף אחריות", details: "מקרר RF50 4 דלתות", fullText: "סמסונג מקרר 4 דלתות דגם RF50 אחריות שנה מחסני חשמל" },
+    { title: "אחריות מכונת כביסה", topic: "אחריות ומוצרים", folder: "מכונת כביסה LG", date: ago(500), provider: "באג", amount: 2890, relevantUntil: ago(135), relevantReason: "סוף אחריות" },
+    { title: "פוליסת ביטוח דירה", topic: "ביטוחים", folder: "ביטוח דירה", people: ["עינבר", "מאיר"], date: ago(100), provider: "מגדל", amount: 1380, relevantUntil: ahead(265), relevantReason: "סוף הפוליסה" },
+    { title: "ביטוח נסיעות 2025", topic: "ביטוחים", folder: "ביטוח נסיעות", people: ["עינבר"], date: ago(420), provider: "פספורטכארד", amount: 210, relevantUntil: ago(400), relevantReason: "סוף הביטוח" },
     { title: "טיסה תל אביב–רומא", topic: "נסיעות", people: ["עינבר", "מאיר"], date: ahead(35), provider: "אל על", amount: 3120, relevantUntil: ahead(41), relevantReason: "טיסה חזור", tripId: "t1", details: "LY381 / LY382" },
-    { title: "דרכון – מאיר", topic: "מסמכים אישיים", people: ["מאיר"], date: ago(3300), provider: "רשות האוכלוסין", relevantUntil: ahead(150), relevantReason: "תוקף הדרכון" },
-    { title: "ביטוח נסיעות 2025", topic: "ביטוחים", people: ["עינבר"], date: ago(420), provider: "פספורטכארד", amount: 210, relevantUntil: ago(400), relevantReason: "סוף הביטוח" },
+    { title: "דרכון – מאיר", topic: "מסמכים אישיים", folder: "מאיר", people: ["מאיר"], date: ago(3300), provider: "רשות האוכלוסין", relevantUntil: ahead(150), relevantReason: "תוקף הדרכון" },
+    { title: "תעודת זהות – נועה", topic: "מסמכים אישיים", people: ["נועה"], date: ago(900), provider: "רשות האוכלוסין" },
+    { title: "חוזה שכירות", topic: "דירה ונכס", folder: "הרצל 12, ראשון לציון", sub: "חוזים", date: ago(150), provider: "משה לוי", amount: 6500, relevantUntil: ahead(215), relevantReason: "סוף החוזה" },
+    { title: "חשבון חשמל", topic: "חשבוניות לבית", folder: "חשמל", date: ago(15), provider: "חברת החשמל", amount: 612 },
     { title: "כרטיס טיסה לאילת", topic: "נסיעות", people: ["נועה"], date: ago(380), provider: "ישראייר", amount: 450, relevantUntil: ago(378), relevantReason: "תאריך הטיסה" }
   ];
   for (const it of items) {
     const img = sampleImage(it.title, [it.provider || "", it.date ? fmtDate(it.date) : "", it.details || "", it.amount ? "סכום: ₪" + fmtMoney(it.amount) : ""].filter(Boolean));
-    await state.api.saveDoc({ tripId: "", amount: null, relevantUntil: "", relevantReason: "", details: "", note: "", fullText: "", ...it }, [img], await makeThumb(img, 180));
+    const base = { tripId: "", amount: null, relevantUntil: "", relevantReason: "", details: "", note: "", fullText: "", people: [] };
+    await state.api.saveDoc({ ...base, ...it }, [img], await makeThumb(img, 180));
   }
 }
 

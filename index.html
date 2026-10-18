@@ -3,16 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0FA3B1">
+<meta name="theme-color" content="#EA580C">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="ניירת בית">
 <link rel="apple-touch-icon" href="icon-bayit.png?v=1">
+<link rel="manifest" href="manifest.json?v=1">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-bayit-192.png?v=1">
 <title>ניירת בית</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&family=Rubik:wght@500;600;700&display=swap">
-<link rel="stylesheet" href="style.css?v=4">
-<link rel="stylesheet" href="home.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="home.css?v=5">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230FA3B1'/%3E%3Cpath d='M14 32 32 16l18 16v18H14z' fill='%23fff'/%3E%3Cpath d='M25 38h14M25 44h10' stroke='%230E6A8C' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 </head>
 <body>
@@ -46,8 +48,7 @@
       </div>
       <nav class="tabs" id="tabs" role="tablist">
         <button class="tab is-active" data-view="home" role="tab">בית</button>
-        <button class="tab" data-view="docs" role="tab">מסמכים</button>
-        <button class="tab" data-view="trips" role="tab">נסיעות</button>
+        <button class="tab" data-view="docs" role="tab">חיפוש</button>
         <button class="tab" data-view="settings" role="tab">הגדרות</button>
       </nav>
     </div>
@@ -57,31 +58,47 @@
   <main class="main">
     <!-- ===== בית ===== -->
     <section class="view" id="homeView">
-      <form class="home-search" id="homeSearchForm">
-        <input id="homeSearch" type="search" placeholder="מה מחפשים? שם, רופא, מוצר, מלון, מספר פוליסה…" autocomplete="off">
+      <form class="home-search" id="homeSearchForm" role="search">
+        <input id="homeSearch" type="search" placeholder="מה מחפשים? שם, רופא, מוצר, מספר פוליסה…" autocomplete="off" enterkeyhint="search">
         <button class="btn btn-primary" type="submit">חיפוש</button>
       </form>
-      <button class="cleanup-banner" id="cleanupBanner" hidden></button>
-      <div class="panel" id="remindPanel" hidden>
-        <h2 class="panel-title">תזכורות קרובות</h2>
-        <ul class="remind-list" id="remindList"></ul>
+      <div class="attn-box" id="attnBox" hidden>
+        <h2 class="section-title">דורש תשומת לב</h2>
+        <ul class="attn" id="attnList"></ul>
+        <button type="button" class="link-btn attn-more" id="attnMore" hidden></button>
       </div>
-      <h2 class="section-title">לפי נושא</h2>
-      <div class="topic-grid" id="topicGrid"></div>
-      <h2 class="section-title" id="recentTitle">נוספו לאחרונה</h2>
-      <div class="doc-list" id="recentList"></div>
+      <div class="tile-grid" id="tileGrid"></div>
       <div class="empty" id="homeEmpty" hidden>
         <p>עוד אין מסמכים. לחצי על "מסמך חדש" כדי לצלם או להעלות את הראשון.</p>
       </div>
     </section>
 
-    <!-- ===== מסמכים (חיפוש וסינון) ===== -->
+    <!-- ===== נושא / תיקייה ===== -->
+    <section class="view" id="browseView" hidden>
+      <nav class="crumbs" id="crumbs" aria-label="מיקום"></nav>
+      <div class="browse-head">
+        <h1 class="browse-title" id="browseTitle"></h1>
+        <div class="browse-acts">
+          <button type="button" class="btn btn-ghost btn-sm" id="browseRename" hidden>שינוי שם</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="browseExcel">📊 אקסל</button>
+        </div>
+      </div>
+      <div class="fold-list" id="foldList"></div>
+      <h2 class="section-title" id="looseTitle" hidden>מסמכים</h2>
+      <div class="doc-list" id="looseList"></div>
+      <div class="empty" id="browseEmpty" hidden><p>עוד אין כאן מסמכים.</p></div>
+      <button type="button" class="arch-link" id="archToggle" hidden></button>
+      <div class="doc-list" id="archList" hidden></div>
+    </section>
+
+    <!-- ===== חיפוש ===== -->
     <section class="view" id="docsView" hidden>
       <div class="search-bar">
         <div class="search-main">
-          <input id="qText" type="search" placeholder="חיפוש בכל המסמכים: שם, נושא, מילה מתוך המסמך…" autocomplete="off">
+          <input id="qText" type="search" placeholder="חיפוש בכל המסמכים: שם, נושא, מילה מתוך המסמך…" autocomplete="off" enterkeyhint="search">
+          <button class="btn btn-ghost btn-sm filter-btn" id="qFilterBtn" type="button">סינון</button>
         </div>
-        <div class="filter-row">
+        <div class="filter-row" id="qFilters" hidden>
           <label class="field"><span>נושא</span><select id="qTopic"></select></label>
           <label class="field"><span>אדם</span><select id="qPerson"></select></label>
           <label class="field"><span>מתאריך</span><input id="qFrom" type="date"></label>
@@ -95,8 +112,9 @@
 
     <!-- ===== נסיעות ===== -->
     <section class="view" id="tripsView" hidden>
+      <nav class="crumbs" id="tripCrumbs" aria-label="מיקום"></nav>
       <div class="trips-head">
-        <h2 class="section-title">נסיעות</h2>
+        <h1 class="browse-title">✈️ נסיעות</h1>
         <button class="btn btn-ghost btn-sm" id="tripNew">נסיעה חדשה</button>
       </div>
       <div class="trip-list" id="tripList"></div>
@@ -115,6 +133,15 @@
         <label class="field"><span>מפתח זיהוי (Gemini API key)</span><input id="sKey" autocomplete="off" dir="ltr"></label>
         <p class="hint"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">לקבלת מפתח חינמי ←</a></p>
         <div class="row-actions"><button class="btn btn-primary" id="sSaveKey">שמירה</button></div>
+      </div>
+      <div class="panel">
+        <h2 class="panel-title">סידור ואקסל</h2>
+        <p class="hint">אקסל של כל הארכיון: תמונת מצב (מה מסתיים בקרוב, כל הביטוחים, הוצאות רכב) ולשונית לכל נושא. אקסל של תיקייה אחת: כפתור "אקסל" בתוך התיקייה.</p>
+        <div class="row-actions">
+          <button class="btn btn-primary" id="sExcel">📊 הורדת אקסל של הכול</button>
+          <button class="btn btn-ghost" id="sTidy">🧹 סידור הארון עכשיו</button>
+          <button class="btn btn-ghost" id="sResort">📂 לסדר מחדש לתיקיות</button>
+        </div>
       </div>
       <div class="panel">
         <h2 class="panel-title">בני משפחה ואנשים</h2>
@@ -225,6 +252,8 @@
         <label class="field"><span>נושא</span><select id="rvTopic"></select></label>
         <label class="field" id="rvTopicNewBox" hidden><span>נושא חדש</span><input id="rvTopicNew" autocomplete="off" maxlength="30"></label>
         <label class="field"><span>תאריך המסמך</span><input id="rvDate" type="date"></label>
+        <label class="field" id="rvFolderBox"><span id="rvFolderLbl">📂 תיקייה</span><input id="rvFolder" list="folderList" autocomplete="off" maxlength="50"></label>
+        <label class="field" id="rvSubBox"><span id="rvSubLbl">סוג</span><input id="rvSub" list="subList" autocomplete="off" maxlength="40"></label>
         <label class="field span2"><span>של מי (אפשר כמה, מופרדים בפסיק)</span><input id="rvPeople" autocomplete="off" list="peopleList"></label>
         <label class="field"><span>גורם / ספק</span><input id="rvProvider" autocomplete="off" placeholder="רופא, חנות, חברת ביטוח…"></label>
         <label class="field"><span>סכום ₪ (אם יש)</span><input id="rvAmount" type="number" step="0.01" inputmode="decimal"></label>
@@ -241,7 +270,7 @@
         <label class="field span2" id="rvRemindTextBox" hidden><span>על מה להזכיר</span><input id="rvRemindText" autocomplete="off" maxlength="80" placeholder="למשל: לחדש את הביטוח, סיום הקורס"></label>
         <label class="field span2" id="rvTripBox" hidden><span>נסיעה</span><select id="rvTrip"></select></label>
       </div>
-      <datalist id="peopleList"></datalist>
+      <datalist id="peopleList"></datalist><datalist id="folderList"></datalist><datalist id="subList"></datalist>
       <label class="field"><span>פירוט</span><input id="rvDetails" autocomplete="off" maxlength="200"></label>
       <label class="field"><span>הערה</span><input id="rvNote" autocomplete="off"></label>
       <details class="fulltext-box"><summary>הטקסט שזוהה במסמך (לחיפוש)</summary><p id="rvFullText"></p></details>
@@ -277,10 +306,10 @@
 <!-- ===== הצעות למחיקה ===== -->
 <dialog id="cleanDlg" class="dlg">
   <div class="dlg-head">
-    <h2>מסמכים שכבר לא רלוונטיים</h2>
+    <h2>🧹 סידור הארון</h2>
     <button class="icon-btn" data-close aria-label="סגירה">✕</button>
   </div>
-  <p class="hint" style="margin-bottom:10px">עברה חצי שנה מאז שהמסמכים האלה הפסיקו להיות רלוונטיים. סמני ליד כל אחד "למחוק" או "לשמור". מה שתשמרי לא יוצע שוב. מסמך שנמחק נשאר 30 יום בסל האשפה של הדרייב.</p>
+  <p class="hint" style="margin-bottom:10px">מסמכים ישנים: שתוקפם נגמר לפני יותר מחצי שנה, או שהוחלפו במסמך חדש. סמני ליד כל אחד "למחוק" או "לשמור". מה שתשמרי לא יוצע שוב. מסמך שנמחק נשאר 30 יום בסל האשפה של הדרייב.</p>
   <ul class="clean-list" id="cleanList"></ul>
   <div class="row-actions">
     <button class="btn btn-primary" id="cleanGo">ביצוע</button>
@@ -305,6 +334,18 @@
   </div>
 </dialog>
 
+<!-- ===== שינוי שם תיקייה ===== -->
+<dialog id="renameDlg" class="dlg dlg-small">
+  <div class="dlg-head">
+    <h2 id="rnTitle">שינוי שם התיקייה</h2>
+    <button class="icon-btn" data-close aria-label="סגירה">✕</button>
+  </div>
+  <label class="field"><span>שם חדש</span><input id="rnName" list="rnList" autocomplete="off" maxlength="50"></label>
+  <datalist id="rnList"></datalist>
+  <p class="hint">אפשר גם לאחד: אם תבחרי שם של תיקייה שכבר קיימת, המסמכים יעברו אליה.</p>
+  <div class="row-actions"><button class="btn btn-primary" id="rnSave">שמירה</button></div>
+</dialog>
+
 <dialog id="confirmDlg" class="dlg dlg-small">
   <p id="cfText"></p>
   <div class="row-actions">
@@ -317,7 +358,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="config.js?v=4"></script>
-<script type="module" src="app.js?v=4"></script>
+<script src="config.js?v=5"></script>
+<script type="module" src="app.js?v=5"></script>
 </body>
 </html>
