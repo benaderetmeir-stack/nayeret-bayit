@@ -8,8 +8,9 @@ export const DEFAULT_TOPICS = ["בריאות", "אחריות ומוצרים", "�
 // by: "person" = התיקייה היא שם האדם. fixed = רשימה קבועה של תיקיות. subs = רשימה מוצעת לתת-תיקייה
 export const FOLDER_RULES = {
   "בריאות": { label: "של מי", by: "person", subLabel: "סוג", subs: ["בדיקות דם", "הדמיה וצילומים", "רופא משפחה", "רופאים מומחים", "עיניים", "שיניים", "מרשמים ותרופות", "הפניות ואישורים", "אשפוז וניתוחים", "חיסונים", "אחר"] },
-  "רכב": { label: "איזה רכב", hint: "דגם ומספר רישוי, למשל: מאזדה 3 · 12-345-67", subLabel: "סוג", subs: ["רישיון רכב", "ביטוח", "טיפולים ותיקונים", "דוחות וקנסות", "קנייה ומכירה", "אחר"] },
-  "ביטוחים": { label: "סוג הביטוח", fixed: ["ביטוח דירה", "ביטוח בריאות", "ביטוח חיים", "ביטוח נסיעות", "ביטוח משכנתא", "אחר"] },
+  "רכב": { label: "איזה רכב", hint: "דגם ומספר רישוי, למשל: מאזדה 3 · 12-345-67", subLabel: "סוג", subs: ["רישיון רכב", "טיפולים ותיקונים", "דוחות וקנסות", "קנייה ומכירה", "אחר"] },
+  "ביטוחים": { label: "סוג הביטוח", fixed: ["ביטוח דירה", "ביטוח רכב", "ביטוח בריאות", "ביטוח חיים", "ביטוח נסיעות", "ביטוח משכנתא", "אחר"], subLabel: "מה מבוטח",
+    subHow: `what is insured: for "ביטוח דירה" / "ביטוח משכנתא" the property (reuse EXACTLY an existing folder name of topic "דירה ונכס" when it is the same property, else the street address); for "ביטוח רכב" the car (reuse EXACTLY an existing folder name of topic "רכב", else model + plate); for "ביטוח בריאות" / "ביטוח חיים" the insured person's first name; for "ביטוח נסיעות" the destination` },
   "אחריות ומוצרים": { label: "מוצר", hint: "למשל: מקרר סמסונג" },
   "חשבוניות לבית": { label: "סוג", fixed: ["חשמל", "מים", "ארנונה", "גז", "אינטרנט וטלפון", "ועד בית", "אחר"] },
   "דירה ונכס": { label: "נכס", hint: "כתובת או שם הנכס", subLabel: "סוג", subs: ["חוזים", "משכנתא", "שיפוצים ותיקונים", "מיסים ואגרות", "אחר"] },
@@ -25,7 +26,7 @@ function folderGuide(folders) {
   const lines = Object.entries(FOLDER_RULES).filter(([, r]) => !r.trips && r.label).map(([t, r]) => {
     const known = (folders && folders[t]) || [];
     const how = r.by === "person" ? "the person's first name (same spelling as the known people)" : r.fixed ? `one of: ${r.fixed.join(", ")}` : r.hint ? `${r.label} (${r.hint})` : r.label;
-    const sub = r.subs ? `sub = one of: ${r.subs.join(", ")}` : r.subLabel ? `sub = ${r.subLabel}` : `sub = ""`;
+    const sub = r.subHow ? `sub = ${r.subHow}` : r.subs ? `sub = one of: ${r.subs.join(", ")}` : r.subLabel ? `sub = ${r.subLabel}` : `sub = ""`;
     return `  - ${t}: folder = ${how}${known.length ? `. Existing folders (reuse exactly when it is the same one): ${known.slice(0, 30).join(" | ")}` : ""}. ${sub}`;
   });
   return lines.join("\n") + `\n  - other topics: folder = "" and sub = ""`;
@@ -54,7 +55,7 @@ Today is ${today}. Look at the page images (all pages belong to ONE document) an
 }
 Folder rules per topic:
 ${folderGuide(folders)}
-- A car insurance policy (חובה / מקיף / צד ג) goes to topic "רכב", sub "ביטוח", NOT to "ביטוחים".
+- EVERY insurance policy goes to topic "ביטוחים" (also car insurance חובה / מקיף / צד ג: folder "ביטוח רכב", sub = the car).
 - For a car, folder = model + plate number when visible, e.g. "מאזדה 3 · 12-345-67". Reuse an existing car folder when the plate or model matches.
 Rules:
 - Dates in Israel are written day/month/year.
@@ -184,7 +185,7 @@ export async function classifyFolders(items, settings, ctx = {}) {
 Topics: ${(ctx.topics || DEFAULT_TOPICS).join(", ")}. Known people: ${(ctx.people || []).join(", ") || "(none)"}.
 Folder rules per topic:
 ${folderGuide(ctx.folders)}
-- A car insurance policy goes to topic "רכב", sub "ביטוח" (change its topic if it is under "ביטוחים").
+- EVERY insurance policy goes to topic "ביטוחים" (car insurance too: folder "ביטוח רכב", sub = the car folder name it had, e.g. its current folder under "רכב").
 - Use the SAME folder name for documents that belong together (same car, same product, same person, same property).
 - Keep the given topic unless it is clearly wrong.
 Return ONLY JSON: {"items":[{"id":string,"topic":string,"folder":string,"sub":string}]} with one entry for every document below.

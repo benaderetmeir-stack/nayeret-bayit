@@ -90,7 +90,7 @@ export async function exportExcel(docs, ctx) {
     const insFirst = r;
     ins.forEach((d, i) => {
       const row = ws.getRow(r++);
-      const kind = d.topic === "רכב" ? `ביטוח רכב · ${folderOf(d)}` : (folderOf(d) || "ביטוח");
+      const kind = d.topic === "רכב" ? `ביטוח רכב · ${folderOf(d)}` : ([folderOf(d), subOf(d)].filter(Boolean).join(" · ") || "ביטוח");
       row.values = [d.title || "פוליסה", kind, d.provider || "", (d.people || []).join(", "), asDate(d.relevantUntil), d.amount ?? null];
       row.getCell(5).numFmt = "dd/mm/yyyy"; row.getCell(6).numFmt = MONEY;
       row.eachCell((c) => { c.font = font(); if (i % 2) c.fill = fill(FILL.zebra); });

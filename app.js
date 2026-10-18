@@ -1,9 +1,9 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
-import { RemoteApi, DemoApi, sha256Hex } from "./api.js?v=5";
-import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=5";
-import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders } from "./ocr.js?v=5";
-import { exportExcel } from "./excel.js?v=5";
-import { scanPage, scannerSupported } from "./scanner.js?v=5";
+import { RemoteApi, DemoApi, sha256Hex } from "./api.js?v=6";
+import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=6";
+import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders } from "./ocr.js?v=6";
+import { exportExcel } from "./excel.js?v=6";
+import { scanPage, scannerSupported } from "./scanner.js?v=6";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -21,7 +21,7 @@ const TOPIC_TINT = { "בריאות": "#FDE8E8", "אחריות ומוצרים": "
 const TOPIC_SHORT = { "אחריות ומוצרים": "אחריות", "דירה ונכס": "דירה", "מסמכים אישיים": "אישי", "חשבוניות לבית": "חשבונות הבית" };
 const PRIMARY = ["בריאות", "רכב", "ביטוחים", "אחריות ומוצרים", "דירה ונכס", "נסיעות", "מסמכים אישיים", "לימודים"];
 const SUB_ICON = { "רישיון רכב": "📄", "ביטוח": "🛡️", "טיפולים ותיקונים": "🔧", "דוחות וקנסות": "🚨", "קנייה ומכירה": "🤝", "בדיקות דם": "🩸", "הדמיה וצילומים": "🩻", "רופא משפחה": "👩‍⚕️", "רופאים מומחים": "👨‍⚕️", "עיניים": "👁️", "שיניים": "🦷", "מרשמים ותרופות": "💊", "הפניות ואישורים": "📋", "אשפוז וניתוחים": "🏥", "חיסונים": "💉", "חוזים": "📝", "משכנתא": "🏦", "שיפוצים ותיקונים": "🔨", "מיסים ואגרות": "🏛️",
-  "ביטוח דירה": "🏠", "ביטוח בריאות": "🩺", "ביטוח חיים": "❤️", "ביטוח נסיעות": "✈️", "ביטוח משכנתא": "🏦", "חשמל": "⚡", "מים": "💧", "ארנונה": "🏛️", "גז": "🔥", "אינטרנט וטלפון": "🌐", "ועד בית": "🏢" };
+  "ביטוח דירה": "🏠", "ביטוח רכב": "🚗", "ביטוח בריאות": "🩺", "ביטוח חיים": "❤️", "ביטוח נסיעות": "✈️", "ביטוח משכנתא": "🏦", "חשמל": "⚡", "מים": "💧", "ארנונה": "🏛️", "גז": "🔥", "אינטרנט וטלפון": "🌐", "ועד בית": "🏢" };
 const FOLDER_ICON = { "רכב": "🚙", "בריאות": "👤", "מסמכים אישיים": "👤", "לימודים": "👤", "אחריות ומוצרים": "📦", "דירה ונכס": "🏠", "חברים": "🤝" };
 const topicIcon = (t) => TOPIC_ICON[t] || "📄";
 const topicShort = (t) => TOPIC_SHORT[t] || t;
@@ -116,6 +116,46 @@ function knownFolders() {
   return Object.fromEntries(Object.entries(m).map(([k, v]) => [k, [...v]]));
 }
 const plural = (n, one, many) => n === 1 ? one : `${n} ${many}`;
+// גרסת הסידור: 2 = כל הביטוחים בתוך "ביטוחים", מחולקים לפי סוג ומה מבוטח
+const SORT_V = 2;
+const isInsuranceLike = (d) => d.topic === "ביטוחים" || (d.topic === "רכב" && /ביטוח/.test(d.sub || ""));
+const needsSort = (d) => d.folder === undefined || (isInsuranceLike(d) && (d.sv || 0) < SORT_V);
+
+/* ----- קישורים: אותו דבר (דירה, רכב, אדם) בכמה נושאים ----- */
+const ekey = (s) => norm(s).replace(/[·,.\-–()]/g, " ").replace(/\s+/g, " ").trim();
+function sameEntity(a, b) {
+  if (!a || !b) return false;
+  const A = ekey(a), B = ekey(b);
+  if (A && A === B) return true;
+  const da = String(a).replace(/\D/g, ""), db = String(b).replace(/\D/g, "");
+  if (da.length >= 5 && da === db) return true;   // אותו מספר רישוי
+  const [s, l] = A.length <= B.length ? [A, B] : [B, A];
+  const st = s.split(" "), lt = l.split(" ");
+  return st.length >= 2 && st.every((t) => lt.includes(t));   // "הרצל 12" ו"הרצל 12, ראשון לציון"
+}
+// כל המקומות בארון: תיקייה בנושא רגיל, או "סוג › מה מבוטח" בביטוחים
+function entityLocations() {
+  const m = new Map();
+  for (const d of state.docs) {
+    if (isArchived(d)) continue;
+    const f = folderOf(d); if (!f) continue;
+    let key, loc;
+    if (d.topic === "ביטוחים") {
+      const s = subOf(d); if (!s) continue;
+      key = `${d.topic}|${f}|${s}`; loc = { key, entity: s, nav: { topic: d.topic, folder: f, sub: s }, icon: "🛡️", label: `${f} › ${s}` };
+    } else {
+      key = `${d.topic}|${f}`; loc = { key, entity: f, nav: { topic: d.topic, folder: f }, icon: topicIcon(d.topic), label: `${topicShort(d.topic)} › ${f}` };
+    }
+    const cur = m.get(key) || { ...loc, count: 0 }; cur.count++; m.set(key, cur);
+  }
+  return [...m.values()];
+}
+function relatedLinks(entities, here) {
+  if (!entities.length) return [];
+  // לא מקשרים למקום שכבר נמצאים בו
+  return entityLocations().filter((l) => !(l.nav.topic === here.topic && l.nav.folder === here.folder) && entities.some((e) => sameEntity(e, l.entity)))
+    .sort((a, b) => (a.nav.topic === "ביטוחים") - (b.nav.topic === "ביטוחים") || a.label.localeCompare(b.label, "he")).slice(0, 8);
+}
 
 const norm = (s) => String(s ?? "").toLowerCase().replace(/[֑-ׇ]/g, "").replace(/["'״׳`]/g, "").replace(/\s+/g, " ");
 function haystack(d) {
@@ -363,6 +403,14 @@ function renderBrowse() {
   $("looseList").hidden = !loose.length;
   $("looseTitle").hidden = !loose.length || !groupList.length;
   $("looseTitle").textContent = level === 1 ? "בלי תיקייה" : "מסמכים";
+  // 🔗 קשור: הביטוח של הדירה / הרכב, ומהביטוח חזרה לדירה / לרכב / לאדם
+  const isIns = topic === "ביטוחים";
+  const entities = level === 1 ? [] : isIns ? (level === 3 ? [sub] : flat ? [...new Set(act.map(subOf).filter(Boolean))] : []) : [folder];
+  const links = relatedLinks(entities, { topic, folder });
+  const tripIds = [...new Set(act.map((d) => d.tripId).filter((id) => id && tripById(id)))];
+  $("linkBox").hidden = !links.length && !tripIds.length;
+  $("linkList").innerHTML = links.map((l) => `<button type="button" class="link-card" data-link="${esc(JSON.stringify(l.nav))}"><span class="l-ico">${l.icon}</span><span class="l-main"><b>${esc(l.label)}</b><small>${plural(l.count, "מסמך אחד", "מסמכים")}</small></span><span class="f-go" aria-hidden="true">‹</span></button>`).join("")
+    + tripIds.map((id) => { const t = tripById(id); return `<button type="button" class="link-card" data-trip="${id}"><span class="l-ico">✈️</span><span class="l-main"><b>נסיעה: ${esc(t.name)}</b><small>${fmtDate(t.from)}</small></span><span class="f-go" aria-hidden="true">‹</span></button>`; }).join("");
   $("archToggle").hidden = !arch.length;
   $("archToggle").textContent = `🗄 ארכיון (${plural(arch.length, "מסמך ישן אחד", "מסמכים ישנים")}) ${state.archOpen ? "▴" : "▾"}`;
   $("archList").hidden = !state.archOpen || !arch.length;
@@ -370,6 +418,7 @@ function renderBrowse() {
   $("browseEmpty").hidden = inHere.length > 0;
 }
 $("browseView").addEventListener("click", (e) => {
+  const lk = e.target.closest("[data-link]"); if (lk) { try { return go(JSON.parse(lk.dataset.link)); } catch { return; } }
   const c = e.target.closest("[data-crumb],[data-gotopic],[data-gofolder],[data-gosub]"); if (!c) return;
   const n = state.nav;
   if (c.dataset.crumb === "home") return setView("home");
@@ -766,6 +815,7 @@ function formFromResult(r) {
   const rule = ruleOf(f.topic);
   if (rule.by === "person") f.folder = f.folder ? matchPerson(f.folder) : ((r.people || []).map(matchPerson)[0] || "");
   if (f.folder) { const hit = (knownFolders()[f.topic] || []).find((x) => norm(x) === norm(f.folder)); if (hit) f.folder = hit; }
+  if (f.topic === "רכב" && /ביטוח/.test(f.sub)) { f.topic = "ביטוחים"; f.sub = f.folder; f.folder = "ביטוח רכב"; }
   // נסיעה: לחבר לנסיעה קיימת שהתאריכים שלה מתאימים, או להציע נסיעה חדשה
   const tr = r.trip;
   if (tr || f.topic === "נסיעות") {
@@ -843,7 +893,9 @@ function syncFolderUi() {
   const opts = [...new Set([...(r.fixed || []), ...known, ...(r.by === "person" ? people() : [])])];
   $("folderList").innerHTML = opts.map((x) => `<option value="${esc(x)}">`).join("");
   $("rvSubLbl").textContent = r.subLabel || "סוג";
-  const subs = [...new Set([...(r.subs || []), ...state.docs.filter((d) => d.topic === tp).map(subOf).filter(Boolean)])];
+  const kf = knownFolders();
+  const subs = [...new Set([...(r.subs || []), ...state.docs.filter((d) => d.topic === tp).map(subOf).filter(Boolean),
+    ...(tp === "ביטוחים" ? [...(kf["דירה ונכס"] || []), ...(kf["רכב"] || []), ...people()] : [])])];
   $("subList").innerHTML = subs.map((x) => `<option value="${esc(x)}">`).join("");
 }
 // בנושאים לפי אדם: אם אין עדיין תיקייה, השם הראשון ב"של מי"
@@ -876,7 +928,10 @@ function formToDoc(f) {
   let folder = f.folder || "";
   if (!folder && ruleOf(topic).by === "person" && ppl.length) folder = ppl[0];
   if (ruleOf(topic).trips) folder = "";
-  return { title, topic, folder, sub: folder ? (f.sub || "") : (ruleOf(topic).label ? f.sub || "" : ""), people: ppl, date: f.date, provider: f.provider, amount, relevantUntil: f.until, relevantReason: f.until ? (f.reason || "בתוקף עד") : "",
+  let tp = topic, sb = folder ? (f.sub || "") : (ruleOf(topic).label ? f.sub || "" : "");
+  // ביטוח רכב תמיד בתוך "ביטוחים" (ברכב הוא מופיע כקישור)
+  if (tp === "רכב" && /ביטוח/.test(sb)) { tp = "ביטוחים"; sb = folder; folder = "ביטוח רכב"; }
+  return { title, topic: tp, folder, sv: SORT_V, sub: sb, people: ppl, date: f.date, provider: f.provider, amount, relevantUntil: f.until, relevantReason: f.until ? (f.reason || "בתוקף עד") : "",
     details: f.details, note: f.note, fullText: f.fullText, tripId: f.tripId, remindAt, remindText: remindAt ? f.remindText : "" };
 }
 // "הזכר לי": בעוד שבוע / חודש / שנה, או תאריך מסוים
@@ -1023,7 +1078,7 @@ async function offerReplace(newDocs) {
 /* ======================= סידור לתיקיות של מסמכים קיימים ======================= */
 async function autoSort(all) {
   if (state.sorting) return;
-  const todo = state.docs.filter((d) => all || d.folder === undefined);
+  const todo = state.docs.filter((d) => all || needsSort(d));
   if (!todo.length) return;
   state.sorting = true;
   try {
@@ -1031,19 +1086,23 @@ async function autoSort(all) {
     if ((state.settings.geminiKey || "").trim()) {
       if (all || todo.length > 3) toast("מסדר את המסמכים לתיקיות… אפשר להמשיך לעבוד", 3500);
       for (let i = 0; i < todo.length; i += 25) {
-        const chunk = todo.slice(i, i + 25).map((d) => ({ id: d.id, title: d.title || "", topic: d.topic || "", people: d.people || [], provider: d.provider || "", details: d.details || "", until: d.relevantReason || "", text: String(d.fullText || "").slice(0, 400) }));
+        const chunk = todo.slice(i, i + 25).map((d) => ({ id: d.id, title: d.title || "", topic: d.topic || "", folder: d.folder || "", sub: d.sub || "", people: d.people || [], provider: d.provider || "", details: d.details || "", until: d.relevantReason || "", text: String(d.fullText || "").slice(0, 400) }));
         const r = await classifyFolders(chunk, state.settings, { topics: topics(), people: people(), folders: all ? {} : knownFolders() });
         if (!r) break;   // לא הצליח עכשיו: ננסה שוב בכניסה הבאה
         results.push(...r);
       }
     } else {
       // בלי מפתח: לפחות מה שאפשר לבד (בריאות, מסמכים אישיים ולימודים לפי אדם)
-      results = todo.map((d) => ({ id: d.id, topic: d.topic, folder: ruleOf(d.topic).by === "person" ? (d.people?.[0] || "") : "", sub: "" }));
+      results = todo.map((d) => {
+        if (d.topic === "רכב" && /ביטוח/.test(d.sub || "")) return { id: d.id, topic: "ביטוחים", folder: "ביטוח רכב", sub: d.folder || "" };
+        if (d.topic === "ביטוחים") return { id: d.id, topic: d.topic, folder: d.folder || "", sub: d.sub || (/בריאות|חיים/.test(d.folder || "") ? d.people?.[0] || "" : "") };
+        return { id: d.id, topic: d.topic, folder: ruleOf(d.topic).by === "person" ? (d.people?.[0] || "") : (d.folder || ""), sub: d.sub || "" };
+      });
     }
     let n = 0;
     for (const r of results) {
       const d = docById(r.id); if (!d) continue;
-      const patch = { folder: r.folder || "", sub: r.folder ? r.sub || "" : "" };
+      const patch = { folder: r.folder || "", sub: r.folder ? r.sub || "" : "", sv: SORT_V };
       if (r.topic && r.topic !== d.topic && topics().includes(r.topic)) patch.topic = r.topic;
       if (ruleOf(patch.topic || d.topic).trips) { patch.folder = ""; patch.sub = ""; }
       if (!patch.folder && ruleOf(patch.topic || d.topic).by === "person" && d.people?.length) patch.folder = d.people[0];
@@ -1084,15 +1143,16 @@ async function seedDemo() {
     { title: "הפניה לרופא עור", topic: "בריאות", folder: "נועה", sub: "הפניות ואישורים", people: ["נועה"], date: ago(10), provider: "ד״ר לוי", relevantUntil: ahead(80), relevantReason: "תוקף ההפניה" },
     { title: "סיכום ביקור אורתופד", topic: "בריאות", folder: "מאיר", sub: "רופאים מומחים", people: ["מאיר"], date: ago(45), provider: "ד״ר כהן" },
     { title: "רישיון רכב", topic: "רכב", folder: car1, sub: "רישיון רכב", people: ["מאיר"], date: ago(200), provider: "משרד התחבורה", amount: 1290, relevantUntil: ahead(165), relevantReason: "תוקף הרישיון" },
-    { title: "פוליסת ביטוח רכב – מקיף וחובה", topic: "רכב", folder: car1, sub: "ביטוח", people: ["מאיר"], date: ago(353), provider: "הראל", amount: 4200, relevantUntil: ahead(12), relevantReason: "סוף הפוליסה", details: "פוליסה 88231 · מקיף + חובה" },
+    { title: "פוליסת ביטוח רכב – מקיף וחובה", topic: "ביטוחים", folder: "ביטוח רכב", sub: car1, sv: 2, people: ["מאיר"], date: ago(353), provider: "הראל", amount: 4200, relevantUntil: ahead(12), relevantReason: "סוף הפוליסה", details: "פוליסה 88231 · מקיף + חובה" },
     { title: "טיפול 60,000 ק״מ", topic: "רכב", folder: car1, sub: "טיפולים ותיקונים", date: ago(70), provider: "מוסך דוד", amount: 1850 },
     { title: "החלפת צמיגים", topic: "רכב", folder: car1, sub: "טיפולים ותיקונים", date: ago(400), provider: "צמיגי השרון", amount: 2400 },
     { title: "רישיון רכב", topic: "רכב", folder: car2, sub: "רישיון רכב", people: ["עינבר"], date: ago(100), provider: "משרד התחבורה", amount: 1100, relevantUntil: ahead(265), relevantReason: "תוקף הרישיון" },
     { title: "ביטוח חובה", topic: "רכב", folder: car2, sub: "ביטוח", people: ["עינבר"], date: ago(100), provider: "ביטוח ישיר", amount: 1650, relevantUntil: ahead(265), relevantReason: "סוף הפוליסה" },
     { title: "אחריות מקרר סמסונג", topic: "אחריות ומוצרים", folder: "מקרר סמסונג", people: [], date: ago(340), provider: "מחסני חשמל", amount: 6490, relevantUntil: ahead(25), relevantReason: "סוף אחריות", details: "מקרר RF50 4 דלתות", fullText: "סמסונג מקרר 4 דלתות דגם RF50 אחריות שנה מחסני חשמל" },
     { title: "אחריות מכונת כביסה", topic: "אחריות ומוצרים", folder: "מכונת כביסה LG", date: ago(500), provider: "באג", amount: 2890, relevantUntil: ago(135), relevantReason: "סוף אחריות" },
-    { title: "פוליסת ביטוח דירה", topic: "ביטוחים", folder: "ביטוח דירה", people: ["עינבר", "מאיר"], date: ago(100), provider: "מגדל", amount: 1380, relevantUntil: ahead(265), relevantReason: "סוף הפוליסה" },
-    { title: "ביטוח נסיעות 2025", topic: "ביטוחים", folder: "ביטוח נסיעות", people: ["עינבר"], date: ago(420), provider: "פספורטכארד", amount: 210, relevantUntil: ago(400), relevantReason: "סוף הביטוח" },
+    { title: "פוליסת ביטוח דירה", topic: "ביטוחים", folder: "ביטוח דירה", sub: "הרצל 12", sv: 2, people: ["עינבר", "מאיר"], date: ago(100), provider: "מגדל", amount: 1380, relevantUntil: ahead(265), relevantReason: "סוף הפוליסה" },
+    { title: "ביטוח בריאות משלים", topic: "ביטוחים", folder: "ביטוח בריאות", sub: "עינבר", sv: 2, people: ["עינבר"], date: ago(160), provider: "מכבי זהב", amount: 1100, relevantUntil: ahead(205), relevantReason: "סוף הפוליסה" },
+    { title: "ביטוח נסיעות 2025", topic: "ביטוחים", folder: "ביטוח נסיעות", sub: "אילת", sv: 2, people: ["עינבר"], date: ago(420), provider: "פספורטכארד", amount: 210, relevantUntil: ago(400), relevantReason: "סוף הביטוח" },
     { title: "טיסה תל אביב–רומא", topic: "נסיעות", people: ["עינבר", "מאיר"], date: ahead(35), provider: "אל על", amount: 3120, relevantUntil: ahead(41), relevantReason: "טיסה חזור", tripId: "t1", details: "LY381 / LY382" },
     { title: "דרכון – מאיר", topic: "מסמכים אישיים", folder: "מאיר", people: ["מאיר"], date: ago(3300), provider: "רשות האוכלוסין", relevantUntil: ahead(150), relevantReason: "תוקף הדרכון" },
     { title: "תעודת זהות – נועה", topic: "מסמכים אישיים", people: ["נועה"], date: ago(900), provider: "רשות האוכלוסין" },

@@ -224,3 +224,14 @@ input[type="date"]::-webkit-date-and-time-value { text-align: start; }
 .dlg, .up-step, .review-form { overflow-x: hidden; }
 /* במחשב: מסך רגוע ולא מתוח לכל הרוחב */
 #homeView, #browseView, #docsView, #tripsView { max-width: 980px; margin-inline: auto; width: 100%; }
+
+/* 🔗 קשור */
+.link-box .section-title { margin: 8px 0 8px; }
+.link-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.link-card { display: flex; align-items: center; gap: 10px; width: 100%; border: 1px dashed var(--sky-2); background: var(--surface-2); border-radius: 14px; padding: 10px 12px; cursor: pointer; font: inherit; color: var(--ink); text-align: start; }
+.link-card:hover { border-style: solid; border-color: var(--turq); }
+.l-ico { font-size: 20px; flex: none; }
+.l-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.l-main b { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+.l-main small { color: var(--ink-3); font-size: 12.5px; }
+@media (max-width: 640px) { .link-list { grid-template-columns: 1fr; } }
