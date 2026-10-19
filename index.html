@@ -13,8 +13,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&family=Rubik:wght@500;600;700&display=swap">
-<link rel="stylesheet" href="style.css?v=6">
-<link rel="stylesheet" href="home.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="home.css?v=7">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230FA3B1'/%3E%3Cpath d='M14 32 32 16l18 16v18H14z' fill='%23fff'/%3E%3Cpath d='M25 38h14M25 44h10' stroke='%230E6A8C' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 </head>
 <body>
@@ -27,6 +27,14 @@
     </div>
     <h1 class="login-title">ניירת בית</h1>
     <p class="login-sub">כל המסמכים של הבית והמשפחה, במקום אחד</p>
+    <div class="g-login" id="gLoginBox" hidden>
+      <button type="button" class="btn btn-block g-btn" id="gLoginBtn">
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+        כניסה עם גוגל
+      </button>
+      <p class="hint g-note">המסמכים נשמרים בגוגל דרייב שלך, בתיקייה "ניירת בית". רק את/ה רואה אותם.</p>
+      <button type="button" class="link-btn" id="pwToggle">כניסה עם סיסמה</button>
+    </div>
     <form id="loginForm" class="login-form" autocomplete="on">
       <label class="field"><span>סיסמה</span><input id="loginPassword" type="password" autocomplete="current-password" required></label>
       <button class="btn btn-primary btn-block" type="submit" id="loginBtn">כניסה</button>
@@ -158,7 +166,7 @@
         <ul class="chips" id="sTopics"></ul>
         <div class="inline-add"><input id="sTopicNew" placeholder="נושא חדש"><button class="btn btn-ghost btn-sm" id="sTopicAdd">הוספה</button></div>
       </div>
-      <div class="panel">
+      <div class="panel" id="sPwPanel">
         <h2 class="panel-title">סיסמה</h2>
         <p class="hint">הסיסמה משותפת לכל מי שנכנס. אחרי החלפה, כל מי שלא יודע את החדשה לא ייכנס.</p>
         <label class="field"><span>סיסמה חדשה</span><input id="sPw1" type="password" autocomplete="new-password"></label>
@@ -167,7 +175,7 @@
       </div>
       <div class="panel">
         <h2 class="panel-title">יציאה</h2>
-        <p class="hint">המכשיר זוכר את הכניסה. כדי שבפעם הבאה תידרש סיסמה, לחצי יציאה.</p>
+        <p class="hint" id="sLogoutHint">המכשיר זוכר את הכניסה. כדי שבפעם הבאה תידרש סיסמה, לחצי יציאה.</p>
         <div class="row-actions"><button class="btn btn-ghost" id="sLogout">יציאה</button></div>
       </div>
     </section>
@@ -362,7 +370,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="config.js?v=6"></script>
-<script type="module" src="app.js?v=6"></script>
+<script src="config.js?v=7"></script>
+<script type="module" src="app.js?v=7"></script>
 </body>
 </html>

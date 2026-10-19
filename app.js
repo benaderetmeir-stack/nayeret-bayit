@@ -1,9 +1,9 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
-import { RemoteApi, DemoApi, sha256Hex } from "./api.js?v=6";
-import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=6";
-import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders } from "./ocr.js?v=6";
-import { exportExcel } from "./excel.js?v=6";
-import { scanPage, scannerSupported } from "./scanner.js?v=6";
+import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=7";
+import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=7";
+import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders } from "./ocr.js?v=7";
+import { exportExcel } from "./excel.js?v=7";
+import { scanPage, scannerSupported } from "./scanner.js?v=7";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -52,8 +52,54 @@ const lsGet = (k) => { try { return localStorage.getItem(k) || ""; } catch { ret
 const lsSet = (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} };
 
 /* ======================= כניסה ======================= */
+/* ----- כניסה עם גוגל ----- */
+let pendingHash = "";
+const isGoogle = () => !!state.api?.google;
+function googleRedirect(prompt) {
+  location.href = googleAuthUrl(state.gid, { prompt, hint: googleEmail(), state: pendingHash || (location.hash.startsWith("#doc=") ? location.hash : "") });
+}
+// תוקף הכניסה לגוגל הוא שעה. מחדשים בשקט כשאין חלון פתוח (כדי לא לאבד עבודה)
+function onAuthNeeded() {
+  if (document.querySelector("dialog[open]")) { toast("החיבור לגוגל פג. סגרי את החלון ונתחבר מחדש אוטומטית.", 5000); return; }
+  toast("מתחבר מחדש לגוגל…", 3000); setTimeout(() => googleRedirect("none"), 400);
+}
+async function startGoogle() {
+  state.api = new DriveApi({ onAuthNeeded });
+  $("demoBanner").hidden = true;
+  try { enterApp(await state.api.login()); }
+  catch (e) {
+    console.error(e);
+    if (e.code === "auth") return;
+    showLogin(); toast("לא הצלחתי להתחבר לגוגל דרייב. נסי שוב.", 4500);
+  }
+}
+$("gLoginBtn").onclick = () => { lsSet("nb_mode", "google"); googleRedirect("select_account"); };
+$("pwToggle").onclick = () => { $("loginForm").hidden = !$("loginForm").hidden; if (!$("loginForm").hidden) setTimeout(() => $("loginPassword").focus(), 30); };
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && isGoogle() && tokenMinutesLeft() < 10 && !document.querySelector("dialog[open]")) googleRedirect("none");
+});
+
 async function boot() {
-  const url = (window.BAYIT_CONFIG?.scriptUrl || "").trim();
+  const cfg = window.BAYIT_CONFIG || {};
+  state.gid = (cfg.googleClientId || "").trim();
+  $("gLoginBox").hidden = !state.gid;
+  $("loginForm").hidden = !!state.gid;
+  if (state.gid) {
+    const back = takeAuthFromHash();
+    if (back?.state) pendingHash = back.state;
+    if (back?.error) {
+      lsSet("nb_mode", "");
+      showLogin();
+      if (back.error !== "access_denied" && back.error !== "interaction_required" && back.error !== "login_required") toast("הכניסה עם גוגל לא הצליחה. נסי שוב.", 4500);
+      return;
+    }
+    if (back?.ok || lsGet("nb_mode") === "google") {
+      lsSet("nb_mode", "google");
+      if (tokenMinutesLeft() > 2) return startGoogle();
+      return googleRedirect("none");   // נגמר תוקף הכניסה: חידוש שקט, בלי ללחוץ שוב
+    }
+  }
+  const url = (cfg.scriptUrl || "").trim();
   state.api = url ? new RemoteApi(url) : new DemoApi();
   $("demoBanner").hidden = !state.api.demo;
   const saved = lsGet("nb_k");
@@ -86,7 +132,7 @@ function enterApp(data) {
   setView(state.view || "home", { replace: true });
   state.api.thumbs().then((t) => { state.thumbs = t || {}; render(); }).catch((e) => console.warn("thumbs", e));
   // קישור מהאקסל: #doc=… פותח את המסמך
-  const m = location.hash.match(/^#doc=(.+)$/);
+  const m = (pendingHash || location.hash).match(/^#doc=(.+)$/); pendingHash = "";
   if (m) { history.replaceState(null, "", location.pathname + location.search); const d = docById(decodeURIComponent(m[1])); if (d) openViewer(d); }
   setTimeout(() => autoSort(false), 1500);
 }
@@ -538,6 +584,8 @@ async function saveSettings(patch) {
   catch (e) { console.error(e); toast("השמירה נכשלה, נסי שוב", 4000); }
 }
 function renderSettings() {
+  $("sPwPanel").hidden = isGoogle();
+  $("sLogoutHint").textContent = isGoogle() ? `מחובר עם גוגל${googleEmail() ? ": " + googleEmail() : ""}. המסמכים נשמרים בדרייב שלך, בתיקייה "ניירת בית".` : "המכשיר זוכר את הכניסה. כדי שבפעם הבאה תידרש סיסמה, לחצי יציאה.";
   $("sKey").value = state.settings.geminiKey || "";
   $("sPeople").innerHTML = people().map((p, i) => `<li>${esc(p)}<button data-rmp="${i}" aria-label="הסרה">✕</button></li>`).join("") || `<li class="hint">עוד אין שמות</li>`;
   $("sTopics").innerHTML = topics().map((t, i) => `<li>${topicIcon(t)} ${esc(t)}<button data-rmt="${i}" aria-label="הסרה">✕</button></li>`).join("");
@@ -566,7 +614,7 @@ $("sResort").onclick = async () => {
   if (!(await confirmBox("לסדר מחדש את כל המסמכים לתיקיות? שמות תיקיות ששינית ידנית עלולים להשתנות.", "לסדר מחדש", false))) return;
   autoSort(true);
 };
-$("sLogout").onclick = () => { lsSet("nb_k", ""); state.api.k = ""; state.docs = []; state.thumbs = {}; showLogin(); };
+$("sLogout").onclick = () => { if (isGoogle()) { googleSignOut(); lsSet("nb_mode", ""); } lsSet("nb_k", ""); state.api.k = ""; state.docs = []; state.thumbs = {}; showLogin(); };
 
 /* ======================= צפייה במסמך ======================= */
 const view = { doc: null, pages: [], zoom: 1 };
@@ -688,7 +736,11 @@ function openUpload(opts = {}) {
   else { showStep("upCollect"); $("upStart").hidden = false; $("upPagesBox").hidden = true; $("upBusy").hidden = true; renderBatchNav(); }
   if (!$("uploadDlg").open) $("uploadDlg").showModal();
 }
-$("fab").onclick = () => openUpload();
+$("fab").onclick = () => {
+  // בכניסה עם גוגל: אם החיבור עומד לפוג, מחדשים לפני שמתחילים לצלם
+  if (isGoogle() && tokenMinutesLeft() < 15) { toast("רגע, מחדש את החיבור לגוגל…", 3000); return setTimeout(() => googleRedirect("none"), 400); }
+  openUpload();
+};
 $("uploadDlg").addEventListener("close", () => { up.runId++; up.skipCtl?.abort(); ["inCamera", "inFile", "inCameraMore", "inFileMore"].forEach((id) => ($(id).value = "")); });
 function bindInput(id, more) { $(id).addEventListener("change", (e) => { const files = [...e.target.files]; e.target.value = ""; if (files.length) handleFiles(files, more); }); }
 bindInput("inCamera", false); bindInput("inFile", false); bindInput("inCameraMore", true); bindInput("inFileMore", true);
