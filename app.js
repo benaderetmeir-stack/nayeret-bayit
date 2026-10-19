@@ -1,9 +1,9 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
-import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=7";
-import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=7";
-import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders } from "./ocr.js?v=7";
-import { exportExcel } from "./excel.js?v=7";
-import { scanPage, scannerSupported } from "./scanner.js?v=7";
+import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=8";
+import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=8";
+import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders } from "./ocr.js?v=8";
+import { exportExcel } from "./excel.js?v=8";
+import { scanPage, scannerSupported } from "./scanner.js?v=8";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -422,12 +422,13 @@ function renderBrowse() {
   if (more) {
     const rest = topics().filter((t) => !PRIMARY.includes(t));
     $("browseTitle").innerHTML = `📦 עוד נושאים`;
-    $("foldList").innerHTML = rest.map((t) => { const docs = state.docs.filter((d) => d.topic === t); return `<button type="button" class="fold" data-gotopic="${esc(t)}"><span class="f-ico" style="--tint:${tint(t)}">${topicIcon(t)}</span><span class="f-main"><b>${esc(t)}</b><small>${docs.length ? esc(groupStatus(docs).count) : "אין עדיין"}</small></span><span class="f-go" aria-hidden="true">‹</span></button>`; }).join("");
-    ["looseTitle", "looseList", "archToggle", "archList", "browseEmpty"].forEach((id) => ($(id).hidden = true));
+    $("foldList").innerHTML = rest.map((t) => { const docs = state.docs.filter((d) => d.topic === t); return `<button type="button" class="fold" data-gotopic="${esc(t)}"><span class="f-ico" style="--tint:${tint(t)}">${topicIcon(t)}</span><span class="f-main"><b>${esc(topicShort(t))}</b><small>${docs.length ? esc(groupStatus(docs).count) : "אין עדיין"}</small></span><span class="f-go" aria-hidden="true">‹</span></button>`; }).join("");
+    $("foldList").hidden = !rest.length;
+    ["looseTitle", "looseList", "archToggle", "archList", "browseEmpty", "linkBox"].forEach((id) => ($(id).hidden = true));
     return;
   }
   const level = sub != null ? 3 : folder != null ? 2 : 1;
-  $("browseTitle").innerHTML = `${level === 1 ? topicIcon(topic) : folderIcon(topic, level === 2 ? folder : sub)} ${esc(level === 1 ? topic : level === 2 ? folder : sub)}`;
+  $("browseTitle").innerHTML = `${level === 1 ? topicIcon(topic) : folderIcon(topic, level === 2 ? folder : sub)} ${esc(level === 1 ? topicShort(topic) : level === 2 ? folder : sub)}`;
   const inHere = state.docs.filter((d) => d.topic === topic && (folder == null || folderOf(d) === folder) && (sub == null || subOf(d) === sub));
   const act = inHere.filter((d) => !isArchived(d)), arch = inHere.filter(isArchived);
   // קבוצות: ברמת הנושא לפי תיקייה, בתוך תיקייה לפי "סוג"
