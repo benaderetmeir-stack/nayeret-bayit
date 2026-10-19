@@ -1,9 +1,9 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
-import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=9";
-import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=9";
-import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=9";
-import { exportExcel } from "./excel.js?v=9";
-import { scanPage, scannerSupported } from "./scanner.js?v=9";
+import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=10";
+import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=10";
+import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=10";
+import { exportExcel } from "./excel.js?v=10";
+import { scanPage, scannerSupported } from "./scanner.js?v=10";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -493,14 +493,15 @@ function renderInsurance() {
     $("foldList").hidden = true;
     $("looseTitle").hidden = true;
     $("looseList").hidden = !list.length;
-    $("looseList").innerHTML = list.map((d) => docCard(d)).join("");
-    // קישור לבעלים: הדירה, הרכב, האדם
-    const owners = new Map();
-    list.forEach((d) => { const f = folderOf(d); if (d.topic !== "ביטוחים" && f) owners.set(`${d.topic}|${f}`, { nav: { topic: d.topic, folder: f }, icon: topicIcon(d.topic), label: `${topicShort(d.topic)} › ${f}` }); });
-    const tripIds = [...new Set(list.map((d) => d.tripId).filter((id) => id && tripById(id)))];
-    $("linkBox").hidden = !owners.size && !tripIds.length;
-    $("linkList").innerHTML = [...owners.values()].map((l) => `<button type="button" class="link-card" data-link="${esc(JSON.stringify(l.nav))}"><span class="l-ico">${l.icon}</span><span class="l-main"><b>${esc(l.label)}</b><small>כל המסמכים של ${esc(l.nav.folder)}</small></span><span class="f-go" aria-hidden="true">‹</span></button>`).join("")
-      + tripIds.map((id) => { const t = tripById(id); return `<button type="button" class="link-card" data-trip="${id}"><span class="l-ico">✈️</span><span class="l-main"><b>נסיעה: ${esc(t.name)}</b><small>${fmtDate(t.from)}</small></span><span class="f-go" aria-hidden="true">‹</span></button>`; }).join("");
+    // מתחת לכל ביטוח: קישור ישיר לבעלים שלו (הדירה, הרכב, האדם, הנסיעה)
+    const ownerLink = (d) => {
+      const f = folderOf(d), t = tripById(d.tripId);
+      if (d.topic !== "ביטוחים" && d.topic !== "נסיעות" && f) return `<button type="button" class="owner-link" data-link="${esc(JSON.stringify({ topic: d.topic, folder: f }))}">${topicIcon(d.topic)} לכל המסמכים של ${esc(f)} <span aria-hidden="true">‹</span></button>`;
+      if (t) return `<button type="button" class="owner-link" data-trip="${t.id}">✈️ לכל המסמכים של הנסיעה ${esc(t.name)} <span aria-hidden="true">‹</span></button>`;
+      return "";
+    };
+    $("looseList").innerHTML = list.map((d) => `<div class="doc-with-link">${docCard(d)}${ownerLink(d)}</div>`).join("");
+    $("linkBox").hidden = true;
   }
   const archHere = kind == null ? arch : arch.filter((d) => insKind(d) === kind);
   $("archToggle").hidden = !archHere.length;
