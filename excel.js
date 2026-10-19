@@ -84,13 +84,13 @@ export async function exportExcel(docs, ctx) {
 
     // 2. כל הביטוחים
     sectionTitle(ws, r++, "🛡️ ביטוחים בתוקף", N);
-    const ins = docs.filter((d) => !isArchived(d) && (d.topic === "ביטוחים" || (d.topic === "רכב" && /ביטוח/.test(subOf(d)))))
+    const ins = docs.filter((d) => !isArchived(d) && ctx.isInsurance(d))
       .sort((a, b) => (a.relevantUntil || "").localeCompare(b.relevantUntil || ""));
     headRow(ws, r++, ["ביטוח", "סוג", "חברה", "של מי", "בתוקף עד", "עלות"]);
     const insFirst = r;
     ins.forEach((d, i) => {
       const row = ws.getRow(r++);
-      const kind = d.topic === "רכב" ? `ביטוח רכב · ${folderOf(d)}` : ([folderOf(d), subOf(d)].filter(Boolean).join(" · ") || "ביטוח");
+      const kind = [ctx.insKind(d), d.topic === "ביטוחים" ? subOf(d) : folderOf(d)].filter(Boolean).join(" · ");
       row.values = [d.title || "פוליסה", kind, d.provider || "", (d.people || []).join(", "), asDate(d.relevantUntil), d.amount ?? null];
       row.getCell(5).numFmt = "dd/mm/yyyy"; row.getCell(6).numFmt = MONEY;
       row.eachCell((c) => { c.font = font(); if (i % 2) c.fill = fill(FILL.zebra); });

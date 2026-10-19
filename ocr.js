@@ -2,28 +2,51 @@
 const API = "https://generativelanguage.googleapis.com/v1beta/models/";
 const FALLBACK_MODELS = ["gemini-flash-latest", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-2.5-flash"];
 
-export const DEFAULT_TOPICS = ["בריאות", "אחריות ומוצרים", "חשבוניות לבית", "רכב", "ביטוחים", "מסמכים אישיים", "לימודים", "דירה ונכס", "חברים", "נסיעות", "שונות"];
+export const DEFAULT_TOPICS = ["דירה ונכס", "בריאות", "מסמכים אישיים", "לימודים", "רכב", "נסיעות", "אחריות ומוצרים", "ביטוחים", "חברים", "שונות"];
 
-// איך מסדרים כל נושא לתיקיות (folder) ובתוכן (sub)
-// by: "person" = התיקייה היא שם האדם. fixed = רשימה קבועה של תיקיות. subs = רשימה מוצעת לתת-תיקייה
+// כל מסמך "גר" אצל הבעלים שלו: הדירה, האדם, הרכב או הנסיעה, ובתוכו לפי סוג.
+// folder = הבעלים (by: "person" = שם האדם). sub = הסוג. subs = רשימה מוצעת
 export const FOLDER_RULES = {
-  "בריאות": { label: "של מי", by: "person", subLabel: "סוג", subs: ["בדיקות דם", "הדמיה וצילומים", "רופא משפחה", "רופאים מומחים", "עיניים", "שיניים", "מרשמים ותרופות", "הפניות ואישורים", "אשפוז וניתוחים", "חיסונים", "אחר"] },
-  "רכב": { label: "איזה רכב", hint: "דגם ומספר רישוי, למשל: מאזדה 3 · 12-345-67", subLabel: "סוג", subs: ["רישיון רכב", "טיפולים ותיקונים", "דוחות וקנסות", "קנייה ומכירה", "אחר"] },
-  "ביטוחים": { label: "סוג הביטוח", fixed: ["ביטוח דירה", "ביטוח רכב", "ביטוח בריאות", "ביטוח חיים", "ביטוח נסיעות", "ביטוח משכנתא", "אחר"], subLabel: "מה מבוטח",
-    subHow: `what is insured: for "ביטוח דירה" / "ביטוח משכנתא" the property (reuse EXACTLY an existing folder name of topic "דירה ונכס" when it is the same property, else the street address); for "ביטוח רכב" the car (reuse EXACTLY an existing folder name of topic "רכב", else model + plate); for "ביטוח בריאות" / "ביטוח חיים" the insured person's first name; for "ביטוח נסיעות" the destination` },
+  "דירה ונכס": { label: "איזו דירה", hint: "כתובת, למשל: הרצל 12, ראשון לציון", subLabel: "סוג", subs: ["ארנונה", "חשמל", "מים", "גז", "ועד בית", "אינטרנט וטלפון", "ביטוח דירה", "חוזים", "משכנתא", "שיפוצים ותיקונים", "אחר"] },
+  "בריאות": { label: "של מי", by: "person", subLabel: "סוג", subs: ["בדיקות", "רופאים", "מרשמים ותרופות", "הפניות ואישורים", "שיניים", "עיניים", "אשפוז וניתוחים", "חיסונים", "ביטוח בריאות", "אחר"] },
+  "מסמכים אישיים": { label: "של מי", by: "person", subLabel: "סוג", subs: ["תעודת זהות", "דרכון", "רישיון נהיגה", "ביטוח חיים", "אחר"] },
+  "לימודים": { label: "של מי", by: "person", subLabel: "סוג", subs: ["תעודות", "אישורים", "תשלומים", "אחר"] },
+  "רכב": { label: "איזה רכב", hint: "דגם ומספר רישוי, למשל: מאזדה 3 · 12-345-67", subLabel: "סוג", subs: ["רישיון רכב", "ביטוח", "טיפולים ותיקונים", "דוחות וקנסות", "קנייה ומכירה", "אחר"] },
+  "נסיעות": { trips: true, subLabel: "סוג", subs: ["טיסות", "מלון", "ביטוח נסיעות", "השכרת רכב", "כרטיסים", "אחר"] },
   "אחריות ומוצרים": { label: "מוצר", hint: "למשל: מקרר סמסונג" },
-  "חשבוניות לבית": { label: "סוג", fixed: ["חשמל", "מים", "ארנונה", "גז", "אינטרנט וטלפון", "ועד בית", "אחר"] },
-  "דירה ונכס": { label: "נכס", hint: "כתובת או שם הנכס", subLabel: "סוג", subs: ["חוזים", "משכנתא", "שיפוצים ותיקונים", "מיסים ואגרות", "אחר"] },
-  "לימודים": { label: "של מי", by: "person", subLabel: "מוסד / שנה" },
-  "מסמכים אישיים": { label: "של מי", by: "person" },
+  "ביטוחים": { label: "סוג הביטוח", fixed: ["ביטוח פנסיוני", "ביטוח משכנתא", "אחר"], subLabel: "של מי / על מה" },
   "חברים": { label: "חבר/ה" },
-  "נסיעות": { trips: true },
   "שונות": {}
 };
+// נושאים ישנים שכבר לא בשימוש (המסמכים שלהם עוברים לדירה)
+export const OLD_TOPICS = ["חשבוניות לבית"];
+
+// מעביר מסמך ממבנה ישן למבנה החדש. מחזיר null אם אין מה לשנות
+// known: { properties: [...] } כדי לנחש דירה כשיש רק אחת
+export function placementFix(d, known = {}) {
+  const t = d.topic || "", f = d.folder || "", s = d.sub || "";
+  const oneProp = (known.properties || []).length === 1 ? known.properties[0] : "";
+  const person = f || (d.people || [])[0] || "";
+  if (t === "חשבוניות לבית") return { topic: "דירה ונכס", folder: oneProp, sub: f || s || "אחר" };
+  if (t === "ביטוחים") {
+    if (/דירה|מבנה|תכולה/.test(f)) return { topic: "דירה ונכס", folder: s || oneProp, sub: "ביטוח דירה" };
+    if (/רכב/.test(f)) return { topic: "רכב", folder: s, sub: "ביטוח" };
+    if (/בריאות/.test(f)) return { topic: "בריאות", folder: s || (d.people || [])[0] || "", sub: "ביטוח בריאות" };
+    if (/חיים/.test(f)) return { topic: "מסמכים אישיים", folder: s || (d.people || [])[0] || "", sub: "ביטוח חיים" };
+    if (/נסיעות/.test(f)) return { topic: "נסיעות", folder: "", sub: "ביטוח נסיעות" };
+    return null;
+  }
+  if (t === "בריאות") {
+    const map = { "בדיקות דם": "בדיקות", "הדמיה וצילומים": "בדיקות", "רופא משפחה": "רופאים", "רופאים מומחים": "רופאים" };
+    if (map[s]) return { topic: t, folder: person, sub: map[s] };
+  }
+  if (t === "דירה ונכס" && s === "מיסים ואגרות") return { topic: t, folder: f, sub: "ארנונה" };
+  return null;
+}
 export const ruleOf = (topic) => FOLDER_RULES[topic] || { label: "תיקייה" };
 
 function folderGuide(folders) {
-  const lines = Object.entries(FOLDER_RULES).filter(([, r]) => !r.trips && r.label).map(([t, r]) => {
+  const lines = Object.entries(FOLDER_RULES).filter(([, r]) => r.label).map(([t, r]) => {
     const known = (folders && folders[t]) || [];
     const how = r.by === "person" ? "the person's first name (same spelling as the known people)" : r.fixed ? `one of: ${r.fixed.join(", ")}` : r.hint ? `${r.label} (${r.hint})` : r.label;
     const sub = r.subHow ? `sub = ${r.subHow}` : r.subs ? `sub = one of: ${r.subs.join(", ")}` : r.subLabel ? `sub = ${r.subLabel}` : `sub = ""`;
@@ -55,7 +78,9 @@ Today is ${today}. Look at the page images (all pages belong to ONE document) an
 }
 Folder rules per topic:
 ${folderGuide(folders)}
-- EVERY insurance policy goes to topic "ביטוחים" (also car insurance חובה / מקיף / צד ג: folder "ביטוח רכב", sub = the car).
+- Everything lives with its OWNER: a bill (ארנונה, חשמל, מים, גז, ועד בית, אינטרנט) or a home insurance goes to topic "דירה ונכס", folder = the property, sub = the type.
+- Insurance goes with what it insures: car insurance → "רכב" (sub "ביטוח"); home insurance → "דירה ונכס" (sub "ביטוח דירה"); health insurance → "בריאות" (folder = person, sub "ביטוח בריאות"); life insurance → "מסמכים אישיים" (sub "ביטוח חיים"); travel insurance → "נסיעות" (sub "ביטוח נסיעות"). Topic "ביטוחים" only for insurance that belongs to none of these (pension…).
+- For topic "נסיעות": folder = "" and sub = one of: טיסות, מלון, ביטוח נסיעות, השכרת רכב, כרטיסים, אחר.
 - For a car, folder = model + plate number when visible, e.g. "מאזדה 3 · 12-345-67". Reuse an existing car folder when the plate or model matches.
 Rules:
 - Dates in Israel are written day/month/year.
@@ -185,7 +210,7 @@ export async function classifyFolders(items, settings, ctx = {}) {
 Topics: ${(ctx.topics || DEFAULT_TOPICS).join(", ")}. Known people: ${(ctx.people || []).join(", ") || "(none)"}.
 Folder rules per topic:
 ${folderGuide(ctx.folders)}
-- EVERY insurance policy goes to topic "ביטוחים" (car insurance too: folder "ביטוח רכב", sub = the car folder name it had, e.g. its current folder under "רכב").
+- Everything lives with its OWNER (property / person / car / trip), with the type as sub. Bills and home insurance → "דירה ונכס"; car insurance → "רכב" sub "ביטוח"; health insurance → "בריאות" sub "ביטוח בריאות"; life insurance → "מסמכים אישיים" sub "ביטוח חיים"; travel insurance → "נסיעות" sub "ביטוח נסיעות".
 - Use the SAME folder name for documents that belong together (same car, same product, same person, same property).
 - Keep the given topic unless it is clearly wrong.
 Return ONLY JSON: {"items":[{"id":string,"topic":string,"folder":string,"sub":string}]} with one entry for every document below.
