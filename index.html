@@ -13,8 +13,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&family=Rubik:wght@500;600;700&display=swap">
-<link rel="stylesheet" href="style.css?v=10">
-<link rel="stylesheet" href="home.css?v=10">
+<link rel="stylesheet" href="style.css?v=11">
+<link rel="stylesheet" href="home.css?v=11">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230FA3B1'/%3E%3Cpath d='M14 32 32 16l18 16v18H14z' fill='%23fff'/%3E%3Cpath d='M25 38h14M25 44h10' stroke='%230E6A8C' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 </head>
 <body>
@@ -307,6 +307,8 @@
       <button class="btn btn-ghost btn-sm" id="vwPrint">הדפסה</button>
       <button class="btn btn-ghost btn-sm" id="vwDownload">הורדה</button>
       <button class="btn btn-ghost btn-sm" id="vwShare">שיתוף</button>
+      <button class="btn btn-ghost btn-sm" id="vwActive" hidden>עדיין בתוקף</button>
+      <button class="btn btn-ghost btn-sm" id="vwArchive" hidden>לארכיון</button>
       <button class="btn btn-ghost btn-sm" id="vwEdit">עריכה</button>
       <button class="btn btn-danger btn-sm" id="vwDelete">מחיקה</button>
       <button class="icon-btn" data-close aria-label="סגירה">✕</button>
@@ -347,6 +349,17 @@
   </div>
 </dialog>
 
+<!-- ===== עדיין בתוקף ===== -->
+<dialog id="activeDlg" class="dlg dlg-small">
+  <div class="dlg-head">
+    <h2>עדיין בתוקף</h2>
+    <button class="icon-btn" data-close aria-label="סגירה">✕</button>
+  </div>
+  <p class="hint">עד מתי המסמך בתוקף? אם לא יודעים, משאירים ריק והוא פשוט יחזור מהארכיון.</p>
+  <label class="field"><span>בתוקף עד</span><input id="acUntil" type="date"></label>
+  <div class="row-actions"><button class="btn btn-primary" id="acSave">שמירה</button></div>
+</dialog>
+
 <!-- ===== שינוי שם תיקייה ===== -->
 <dialog id="renameDlg" class="dlg dlg-small">
   <div class="dlg-head">
@@ -371,7 +384,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="config.js?v=10"></script>
-<script type="module" src="app.js?v=10"></script>
+<script src="config.js?v=11"></script>
+<script type="module" src="app.js?v=11"></script>
 </body>
 </html>

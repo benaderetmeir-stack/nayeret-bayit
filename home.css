@@ -255,3 +255,6 @@ input[type="date"]::-webkit-date-and-time-value { text-align: start; }
 .owner-link:hover { background: var(--sky); }
 .doc-with-link, .doc-with-link .doc-card, .owner-link { min-width: 0; max-width: 100%; }
 .owner-link { overflow-wrap: anywhere; }
+
+.doc-with-link > .owner-link:not(:last-child) { border-radius: 0; }
+.app-link { color: var(--ink-2); font-weight: 600; }

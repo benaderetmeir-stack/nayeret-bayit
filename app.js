@@ -1,9 +1,9 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
-import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=10";
-import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=10";
-import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=10";
-import { exportExcel } from "./excel.js?v=10";
-import { scanPage, scannerSupported } from "./scanner.js?v=10";
+import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=11";
+import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=11";
+import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=11";
+import { exportExcel } from "./excel.js?v=11";
+import { scanPage, scannerSupported } from "./scanner.js?v=11";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -159,7 +159,24 @@ const tripById = (id) => (state.settings.trips || []).find((t) => t.id === id);
 const docById = (id) => state.docs.find((d) => d.id === id);
 
 // ארכיון: מה שתוקפו עבר, או שהוחלף במסמך חדש. לא נמחק, רק לא מעמיס על התיקייה
-const isArchived = (d) => !!(d.archived || d.replacedBy) || (!!d.relevantUntil && d.relevantUntil < today());
+// הארכות ונספחים: מסמך שמאריך מסמך קיים (חוזה, אחריות, ביטוח). הנספח מוצג מתחת למסמך המקורי
+const EXT_RE = /הארכ|נספח|חידוש החוזה|חידוש חוזה|תוספת לחוזה|addendum|extension/i;
+const looksLikeExtension = (d) => EXT_RE.test(`${d.title || ""} ${d.details || ""} ${d.relevantReason || ""}`);
+const appendicesOf = (d) => state.docs.filter((x) => x.extends === d.id);
+const isAppendix = (d) => !!(d.extends && docById(d.extends));
+function effectiveUntil(d) {
+  let u = d.relevantUntil || "";
+  for (const a of appendicesOf(d)) if ((a.relevantUntil || "") > u) u = a.relevantUntil;
+  return u;
+}
+// ארכיון: מה שתוקפו עבר (כולל הארכות), או שהוחלף במסמך חדש. "עדיין בתוקף" (keepActive) גובר על הכול
+function isArchived(d) {
+  if (d.keepActive) return false;
+  if (isAppendix(d)) return isArchived(docById(d.extends));
+  if (d.archived || d.replacedBy) return true;
+  const u = effectiveUntil(d);
+  return !!u && u < today();
+}
 function folderOf(d) {
   if (d.folder) return d.folder;
   return ruleOf(d.topic).by === "person" && d.people?.length ? d.people[0] : "";
@@ -228,24 +245,26 @@ function matches(d, q) {
 }
 
 function validity(d) {
-  if (!d.relevantUntil) return null;
-  const n = daysUntil(d.relevantUntil);
-  if (n < 0) return { cls: "tag-old", text: `${d.relevantReason || "רלוונטי עד"} ${fmtDate(d.relevantUntil)} (עבר)` };
-  if (n <= REMIND_AHEAD_DAYS) return { cls: "tag-soon", text: `${d.relevantReason || "בתוקף עד"} ${fmtDate(d.relevantUntil)}` };
-  return { cls: "tag-valid", text: `${d.relevantReason || "בתוקף עד"} ${fmtDate(d.relevantUntil)}` };
+  const u = effectiveUntil(d);
+  if (!u) return d.keepActive ? { cls: "tag-valid", text: "בתוקף" } : null;
+  const why = u !== d.relevantUntil ? "הוארך עד" : (d.relevantReason || "בתוקף עד");
+  const n = daysUntil(u);
+  if (n < 0) return d.keepActive ? { cls: "tag-valid", text: "סומן כבתוקף" } : { cls: "tag-old", text: `${d.relevantReason || "רלוונטי עד"} ${fmtDate(u)} (עבר)` };
+  if (n <= REMIND_AHEAD_DAYS) return { cls: "tag-soon", text: `${why} ${fmtDate(u)}` };
+  return { cls: "tag-valid", text: `${why} ${fmtDate(u)}` };
 }
 
 // תזכורות: מסמכים שתוקפם מתקרב, ונסיעות קרובות (כולל בדיקת דרכונים)
 function reminders() {
   const out = [];
   for (const d of state.docs) {
-    if (!d.relevantUntil || d.noRemind || d.replacedBy || d.archived) continue;
-    const n = daysUntil(d.relevantUntil);
-    if (n > REMIND_AHEAD_DAYS || n < -14) continue;
-    const reason = d.relevantReason || "בתוקף עד";
-    out.push({ key: `d:${d.id}:${d.relevantUntil}`, ico: topicIcon(d.topic), days: n, docId: d.id, title: d.title || "מסמך",
-      sub: n < 0 ? `${reason}: עבר לפני ${-n} ימים (${fmtDate(d.relevantUntil)})` : n === 0 ? `${reason}: היום` : `${reason}: בעוד ${n} ימים (${fmtDate(d.relevantUntil)})`,
-      cal: { title: `${reason}: ${d.title || "מסמך"}`, date: n > 30 ? addDays(d.relevantUntil, -30) : today(), details: `${reason} ב-${fmtDate(d.relevantUntil)}. מתוך ניירת בית.` } });
+    if (!d.relevantUntil || d.noRemind || d.replacedBy || d.archived || isAppendix(d)) continue;
+    const ru = effectiveUntil(d), n = daysUntil(ru);
+    if (n > REMIND_AHEAD_DAYS || n < -14 || (d.keepActive && n < 0)) continue;
+    const reason = ru !== d.relevantUntil ? "סוף ההארכה" : (d.relevantReason || "בתוקף עד");
+    out.push({ key: `d:${d.id}:${ru}`, ico: topicIcon(d.topic), days: n, docId: d.id, title: d.title || "מסמך",
+      sub: n < 0 ? `${reason}: עבר לפני ${-n} ימים (${fmtDate(ru)})` : n === 0 ? `${reason}: היום` : `${reason}: בעוד ${n} ימים (${fmtDate(ru)})`,
+      cal: { title: `${reason}: ${d.title || "מסמך"}`, date: n > 30 ? addDays(ru, -30) : today(), details: `${reason} ב-${fmtDate(ru)}. מתוך ניירת בית.` } });
   }
   // "הזכר לי" שהוגדר במסמך: מופיע מ-7 ימים לפני
   for (const d of state.docs) {
@@ -277,7 +296,7 @@ function reminders() {
   return out.filter((r) => !dismissed.has(r.key)).sort((a, b) => a.days - b.days);
 }
 // "סידור הארון": מה שתוקפו נגמר לפני יותר מחצי שנה, או שהוחלף במסמך חדש
-const tidyCandidates = () => state.docs.filter((d) => !d.keep && (d.replacedBy || (d.relevantUntil && daysUntil(d.relevantUntil) < -CLEAN_AFTER_DAYS)));
+const tidyCandidates = () => state.docs.filter((d) => !d.keep && !d.keepActive && !isAppendix(d) && (d.replacedBy || (effectiveUntil(d) && daysUntil(effectiveUntil(d)) < -CLEAN_AFTER_DAYS)));
 function calUrl({ title, date, details }) {
   const a = date.replace(/-/g, ""), b = addDays(date, 1).replace(/-/g, "");
   return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${a}/${b}&details=${encodeURIComponent(details || "")}`;
@@ -318,7 +337,8 @@ function docCard(d, opts = {}) {
   const v = validity(d), t = tripById(d.tripId), th = state.thumbs[d.id], arch = isArchived(d);
   const path = opts.path === false ? (opts.sub && subOf(d) ? subOf(d) : "") : pathText(d);
   const ppl = (d.people || []).filter((p) => p !== folderOf(d));
-  return `<button type="button" class="doc-card${arch ? " is-arch" : ""}" data-doc="${d.id}">
+  const apps = appendicesOf(d);
+  const card = `<button type="button" class="doc-card${arch ? " is-arch" : ""}" data-doc="${d.id}">
     ${th ? `<img class="thumb" src="${th}" alt="">` : `<span class="thumb"></span>`}
     <span class="d-main">
       <span class="d-title">${esc(d.title || "מסמך")}</span>
@@ -328,6 +348,8 @@ function docCard(d, opts = {}) {
     </span>
     ${d.amount != null ? `<span class="d-amt">₪${fmtMoney(d.amount)}</span>` : ""}
   </button>`;
+  if (!apps.length) return card;
+  return `<div class="doc-with-link">${card}${apps.map((a) => `<button type="button" class="owner-link app-link" data-doc="${a.id}">📎 ${esc(a.title || "נספח")}${a.relevantUntil ? ` · עד ${fmtDate(a.relevantUntil)}` : ""}</button>`).join("")}</div>`;
 }
 document.addEventListener("click", (e) => { const c = e.target.closest("[data-doc]"); if (c && !e.target.closest("dialog")) openViewer(docById(c.dataset.doc)); });
 
@@ -402,11 +424,11 @@ document.addEventListener("click", (e) => { const t = e.target.closest("[data-tr
 function groupStatus(docs) {
   const act = docs.filter((d) => !isArchived(d));
   const count = act.length ? plural(act.length, "מסמך אחד", "מסמכים") : `רק בארכיון (${docs.length})`;
-  const dated = act.filter((d) => d.relevantUntil).sort((a, b) => a.relevantUntil.localeCompare(b.relevantUntil));
+  const dated = act.filter((d) => effectiveUntil(d) && !(d.keepActive && effectiveUntil(d) < today())).sort((a, b) => effectiveUntil(a).localeCompare(effectiveUntil(b)));
   if (dated.length) {
-    const d = dated[0], n = daysUntil(d.relevantUntil), why = d.relevantReason || "בתוקף עד";
+    const d = dated[0], u = effectiveUntil(d), n = daysUntil(u), why = u !== d.relevantUntil ? "הוארך עד" : (d.relevantReason || "בתוקף עד");
     if (n <= REMIND_AHEAD_DAYS) return { count, cls: "st-warn", text: `${why}: ${n === 0 ? "היום" : `בעוד ${n} ימים`}` };
-    if (dated.length === 1) return { count, cls: "st-ok", text: `${why} ${fmtDate(d.relevantUntil)}` };
+    if (dated.length === 1) return { count, cls: "st-ok", text: `${why} ${fmtDate(u)}` };
     return { count, cls: "st-ok", text: "הכול בתוקף" };
   }
   const last = act.map((d) => d.date || "").filter(Boolean).sort().pop();
@@ -440,7 +462,7 @@ function renderBrowse() {
   if (topic === "ביטוחים") return renderInsurance();
   const level = sub != null ? 3 : folder != null ? 2 : 1;
   $("browseTitle").innerHTML = `${level === 1 ? topicIcon(topic) : folderIcon(topic, level === 2 ? folder : sub)} ${esc(level === 1 ? topicShort(topic) : level === 2 ? folder : sub)}`;
-  const inHere = state.docs.filter((d) => d.topic === topic && (folder == null || folderOf(d) === folder) && (sub == null || subOf(d) === sub));
+  const inHere = state.docs.filter((d) => !isAppendix(d) && d.topic === topic && (folder == null || folderOf(d) === folder) && (sub == null || subOf(d) === sub));
   const act = inHere.filter((d) => !isArchived(d)), arch = inHere.filter(isArchived);
   // קבוצות: ברמת הנושא לפי תיקייה, בתוך תיקייה לפי "סוג"
   const keyOf = level === 1 ? folderOf : level === 2 ? subOf : () => "";
@@ -478,7 +500,7 @@ function renderBrowse() {
 // 🛡️ ביטוחים: כל הביטוחים מכל המקומות, לפי סוג. כל ביטוח גר אצל הבעלים שלו (דירה, רכב, אדם, נסיעה)
 function renderInsurance() {
   const kind = state.nav.folder;
-  const all = state.docs.filter(isInsurance), act = all.filter((d) => !isArchived(d)), arch = all.filter(isArchived);
+  const all = state.docs.filter((d) => isInsurance(d) && !isAppendix(d)), act = all.filter((d) => !isArchived(d)), arch = all.filter(isArchived);
   $("browseRename").hidden = true; $("browseExcel").hidden = !all.length;
   $("browseTitle").innerHTML = `🛡️ ${esc(kind || "ביטוחים")}`;
   $("linkBox").hidden = true;
@@ -681,6 +703,8 @@ async function openViewer(d) {
   $("vwMeta").innerHTML = [
     `<span>${topicIcon(d.topic)} <b>${esc([d.topic, folderOf(d), subOf(d)].filter(Boolean).join(" › "))}</b></span>`,
     isArchived(d) ? `<span class="tag tag-old">בארכיון${d.replacedBy ? " · הוחלף במסמך חדש" : ""}</span>` : "",
+    ...appendicesOf(d).map((a) => `<span class="tag tag-valid">📎 ${esc(a.title || "נספח")}${a.relevantUntil ? " · עד " + fmtDate(a.relevantUntil) : ""}</span>`),
+    isAppendix(d) ? `<span class="tag">📎 נספח ל: ${esc(docById(d.extends).title || "מסמך")}</span>` : "",
     d.people?.length ? `<span>של: <b>${esc(d.people.join(", "))}</b></span>` : "",
     d.date ? `<span>תאריך: <b>${fmtDate(d.date)}</b></span>` : "",
     d.provider ? `<span>גורם: <b>${esc(d.provider)}</b></span>` : "",
@@ -692,6 +716,8 @@ async function openViewer(d) {
     d.remindAt ? `<span class="tag tag-soon">🔔 ${fmtDate(d.remindAt)}${d.remindText ? " · " + esc(d.remindText) : ""}</span>` : ""
   ].join("");
   $("vwCal").hidden = !d.relevantUntil && !d.remindAt;
+  $("vwActive").hidden = !isArchived(d) || isAppendix(d);
+  $("vwArchive").hidden = isArchived(d) || isAppendix(d) || !(d.keepActive || d.relevantUntil);
   $("vwBody").innerHTML = `<div class="busy"><span class="spinner"></span>טוען…</div>`;
   $("viewDlg").showModal();
   try { view.pages = await getPages(d.id); } catch (e) { console.error(e); view.pages = []; $("vwBody").innerHTML = `<div class="empty"><p>לא הצלחתי לטעון את המסמך. בדקי חיבור ונסי שוב.</p></div>`; return; }
@@ -732,6 +758,19 @@ $("vwPrint").onclick = () => {
   const w = window.open("", "_blank"); if (!w) return toast("הדפדפן חסם חלון חדש");
   w.document.write(`<!doctype html><html dir="rtl"><head><title>${esc(view.doc.title)}</title><style>body{margin:0}img{width:100%;page-break-after:always;display:block}</style></head><body>${view.pages.map((p) => `<img src="${p}">`).join("")}<script>window.onload=()=>{window.print();}<\/script></body></html>`);
   w.document.close();
+};
+// "עדיין בתוקף": מחזיר מסמך מהארכיון (אפשר עם תאריך חדש)
+$("vwActive").onclick = () => { $("acUntil").value = ""; $("activeDlg").showModal(); };
+$("acSave").onclick = async () => {
+  const d = view.doc, until = $("acUntil").value;
+  const patch = until ? { relevantUntil: until, relevantReason: d.relevantReason || "בתוקף עד", keepActive: false, archived: false, replacedBy: "" } : { keepActive: true, archived: false, replacedBy: "" };
+  try { await state.api.saveDoc({ id: d.id, ...patch }); Object.assign(d, patch); $("activeDlg").close(); $("viewDlg").close(); toast("המסמך חזר מהארכיון"); render(); }
+  catch (e) { console.error(e); toast("השמירה נכשלה, נסי שוב", 4000); }
+};
+$("vwArchive").onclick = async () => {
+  const d = view.doc, patch = { keepActive: false, archived: true };
+  try { await state.api.saveDoc({ id: d.id, ...patch }); Object.assign(d, patch); $("viewDlg").close(); toast("עבר לארכיון"); render(); }
+  catch (e) { console.error(e); toast("השמירה נכשלה, נסי שוב", 4000); }
 };
 $("vwEdit").onclick = () => { $("viewDlg").close(); openUpload({ edit: view.doc, pages: view.pages }); };
 $("vwDelete").onclick = async () => {
@@ -1158,8 +1197,14 @@ $("upReview").addEventListener("submit", async (e) => {
 });
 
 // מסמך חדש שמחליף מסמך קודם (ביטוח חדש לאותו רכב, דרכון חדש…): מציעים למחוק את הקודם או להעביר לארכיון
+// המסמך המקורי שהנספח / ההארכה שייך אליו
+function findBase(doc) {
+  const cands = state.docs.filter((o) => o.id !== doc.id && !o.extends && !looksLikeExtension(o) && o.topic === doc.topic && folderOf(o) === folderOf(doc)
+    && (!subOf(o) || !subOf(doc) || subOf(o) === subOf(doc)) && (o.date || "") <= (doc.date || "9999"));
+  return cands.sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0] || null;
+}
 function findReplaced(doc) {
-  if (!doc.relevantUntil) return null;
+  if (!doc.relevantUntil || looksLikeExtension(doc)) return null;
   const tw = words(doc.title.replace(/[\d\/.\-–]+/g, " "));
   return state.docs.find((o) => {
     if (o.id === doc.id || o.replacedBy || o.archived || !o.relevantUntil || o.relevantUntil >= doc.relevantUntil) return false;
@@ -1172,6 +1217,18 @@ function findReplaced(doc) {
 }
 async function offerReplace(newDocs) {
   for (const doc of newDocs) {
+    if (looksLikeExtension(doc)) {
+      const base = findBase(doc);
+      if (base) {
+        const longer = doc.relevantUntil && doc.relevantUntil > effectiveUntil(base);
+        const ok = await confirmBox(`זה נראה כמו הארכה / נספח של "${base.title}".\nלחבר ביניהם${longer ? ` ולהאריך את התוקף עד ${fmtDate(doc.relevantUntil)}` : ""}?`, "כן, לחבר", false, "לא, מסמך נפרד");
+        if (ok) {
+          try { await state.api.saveDoc({ id: doc.id, extends: base.id }); const d = docById(doc.id); if (d) d.extends = base.id; toast(longer ? "חוברו. החוזה בתוקף עד " + fmtDate(doc.relevantUntil) : "חוברו"); }
+          catch (e) { console.error(e); toast("החיבור נכשל, נסי שוב", 4000); }
+        } else if (ok === false) { try { await state.api.saveDoc({ id: doc.id, extNo: true }); const d = docById(doc.id); if (d) d.extNo = true; } catch {} }
+        render(); continue;
+      }
+    }
     const old = findReplaced(doc); if (!old) continue;
     const ans = await confirmBox(`נכנס מסמך חדש: "${doc.title}".\nיש כבר את הקודם: "${old.title}" (${old.relevantReason || "בתוקף עד"} ${fmtDate(old.relevantUntil)}).\nמה לעשות עם הקודם?`, "למחוק את הקודם", true, "להעביר לארכיון");
     try {
@@ -1205,6 +1262,13 @@ async function autoSort(all) {
       const p = placementPatch(d); if (!p) continue;
       try { await state.api.saveDoc({ id: d.id, ...p }); Object.assign(d, p); delete d._h; n++; }
       catch (e) { console.warn("migrate", e); break; }
+    }
+    // 1א. נספחי הארכה שכבר שמורים: מחברים לחוזה המקורי (והוא חוזר מהארכיון)
+    for (const d of state.docs.slice()) {
+      if (d.extends || d.extNo || !looksLikeExtension(d)) continue;
+      const base = findBase(d); if (!base) continue;
+      try { await state.api.saveDoc({ id: d.id, extends: base.id }); d.extends = base.id; n++; }
+      catch (e) { console.warn("link", e); break; }
     }
     // 2. מסמכים שעוד לא סודרו בכלל: לפי הטקסט שלהם
     const todo = state.docs.filter((d) => all || d.folder === undefined);
@@ -1280,6 +1344,8 @@ async function seedDemo() {
     { title: "דרכון – מאיר", topic: "מסמכים אישיים", folder: "מאיר", people: ["מאיר"], date: ago(3300), provider: "רשות האוכלוסין", relevantUntil: ahead(150), relevantReason: "תוקף הדרכון" },
     { title: "תעודת זהות – נועה", topic: "מסמכים אישיים", people: ["נועה"], date: ago(900), provider: "רשות האוכלוסין" },
     { title: "חוזה שכירות", topic: "דירה ונכס", folder: "הרצל 12, ראשון לציון", sub: "חוזים", date: ago(150), provider: "משה לוי", amount: 6500, relevantUntil: ahead(215), relevantReason: "סוף החוזה" },
+    { title: "חוזה שכירות", topic: "דירה ונכס", folder: "רוטשילד 5, תל אביב", sub: "חוזים", date: ago(385), provider: "דנה כהן", amount: 7200, relevantUntil: ago(20), relevantReason: "סוף החוזה" },
+    { title: "נספח הארכת חוזה שכירות", topic: "דירה ונכס", folder: "רוטשילד 5, תל אביב", sub: "חוזים", date: ago(40), provider: "דנה כהן", relevantUntil: ahead(345), relevantReason: "סוף ההארכה" },
     { title: "חשבון חשמל", topic: "חשבוניות לבית", folder: "חשמל", date: ago(15), provider: "חברת החשמל", amount: 612 },
     { title: "כרטיס טיסה לאילת", topic: "נסיעות", people: ["נועה"], date: ago(380), provider: "ישראייר", amount: 450, relevantUntil: ago(378), relevantReason: "תאריך הטיסה" }
   ];
