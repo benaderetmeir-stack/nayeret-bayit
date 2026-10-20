@@ -1,9 +1,9 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
-import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=11";
-import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=11";
-import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=11";
-import { exportExcel } from "./excel.js?v=11";
-import { scanPage, scannerSupported } from "./scanner.js?v=11";
+import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=12";
+import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=12";
+import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=12";
+import { exportExcel } from "./excel.js?v=12";
+import { scanPage, scannerSupported } from "./scanner.js?v=12";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -349,7 +349,8 @@ function docCard(d, opts = {}) {
     ${d.amount != null ? `<span class="d-amt">₪${fmtMoney(d.amount)}</span>` : ""}
   </button>`;
   if (!apps.length) return card;
-  return `<div class="doc-with-link">${card}${apps.map((a) => `<button type="button" class="owner-link app-link" data-doc="${a.id}">📎 ${esc(a.title || "נספח")}${a.relevantUntil ? ` · עד ${fmtDate(a.relevantUntil)}` : ""}</button>`).join("")}</div>`;
+  // הנספח מוצג כמסמך רגיל (עם תמונה), מתחת למסמך המקורי, עם הערה קטנה
+  return `<div class="doc-group">${card}${apps.map((a) => `<div class="app-note">📎 נספח / הארכה של המסמך הזה</div>${docCard(a, { path: false })}`).join("")}</div>`;
 }
 document.addEventListener("click", (e) => { const c = e.target.closest("[data-doc]"); if (c && !e.target.closest("dialog")) openViewer(docById(c.dataset.doc)); });
 

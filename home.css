@@ -258,3 +258,7 @@ input[type="date"]::-webkit-date-and-time-value { text-align: start; }
 
 .doc-with-link > .owner-link:not(:last-child) { border-radius: 0; }
 .app-link { color: var(--ink-2); font-weight: 600; }
+
+/* מסמך עם נספח: שניהם ככרטיסים, מקובצים יחד */
+.doc-group { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px dashed var(--sky-2); border-radius: 18px; background: var(--surface-2); min-width: 0; }
+.app-note { font-size: 13px; font-weight: 600; color: var(--ink-2); padding: 2px 6px 0; }
