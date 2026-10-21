@@ -1,6 +1,7 @@
 // זיהוי מסמכים עם Google Gemini (מכסה חינמית)
+import { askGemini, shrinkPages } from "./fastgem.js?v=13";
 const API = "https://generativelanguage.googleapis.com/v1beta/models/";
-const FALLBACK_MODELS = ["gemini-flash-latest", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-2.5-flash"];
+const FALLBACK_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
 
 export const DEFAULT_TOPICS = ["דירה ונכס", "בריאות", "מסמכים אישיים", "לימודים", "רכב", "נסיעות", "אחריות ומוצרים", "ביטוחים", "חברים", "שונות"];
 
@@ -74,7 +75,7 @@ Today is ${today}. Look at the page images (all pages belong to ONE document) an
   "folder": string,           // the folder inside the topic, see the folder rules below. "" if unclear
   "sub": string,              // the sub folder inside that folder, see the rules below. "" if not relevant
   "details": string,          // one short Hebrew line: what it is about (test results summary, product + model, policy number, flight numbers…)
-  "fullText": string          // all readable text of the document, plain, up to 3000 characters, for searching
+  "fullText": string          // the readable text of the document, plain, up to 1500 characters, for searching
 }
 Folder rules per topic:
 ${folderGuide(folders)}
@@ -142,55 +143,17 @@ export function normalizeResult(r) {
 
 function safeMsg(body) { try { return (JSON.parse(body).error?.message || "").slice(0, 160); } catch { return String(body).slice(0, 160); } }
 
-const CALL_TIMEOUT = 40000; // שניות לכל ניסיון, אחר כך עוברים לדגם הבא
-async function callModel(model, key, pages, signal, text) {
-  const parts = [{ text }];
-  for (const p of pages.slice(0, 4)) parts.push({ inline_data: { mime_type: "image/jpeg", data: p.slice(p.indexOf(",") + 1) } });
-  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), CALL_TIMEOUT);
-  const stop = () => ctl.abort(); signal?.addEventListener("abort", stop);
-  let res;
-  try {
-    res = await fetch(API + encodeURIComponent(model) + ":generateContent", {
-    signal: ctl.signal,
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-    body: JSON.stringify({ contents: [{ parts }], generationConfig: { responseMimeType: "application/json", temperature: 0 } })
-  });
-  } catch (e) {
-    const err = new Error(signal?.aborted ? "skipped" : "timeout"); err.status = signal?.aborted ? "skip" : "timeout"; throw err;
-  } finally { clearTimeout(t); signal?.removeEventListener("abort", stop); }
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    const err = new Error(`Gemini ${res.status}`); err.status = res.status; err.body = body; throw err;
-  }
-  const data = await res.json();
-  const reply = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
-  const json = reply.slice(reply.indexOf("{"), reply.lastIndexOf("}") + 1);
-  return JSON.parse(json);
-}
-
 // מחזיר {ok, result, message}
 export async function recognize(pages, settings, signal, ctx = {}) {
   const text = prompt(ctx.topics || DEFAULT_TOPICS, ctx.people || [], ctx.today || new Date().toISOString().slice(0, 10), ctx.folders);
   const key = (settings.geminiKey || "").trim();
   if (!key) return { ok: false, message: "לא הוגדר מפתח זיהוי, אז ממלאים ידנית. אפשר להוסיף מפתח בהגדרות." };
   const models = [settings.geminiModel || FALLBACK_MODELS[0], ...FALLBACK_MODELS].filter((m, i, a) => m && a.indexOf(m) === i);
-  let last, hitQuota = false, timeouts = 0;
-  for (const m of models) {
-    try {
-      if (signal?.aborted) break;
-      return { ok: true, result: normalizeResult(await callModel(m, key, pages, signal, text)), model: m };
-    } catch (e) {
-      last = e;
-      // דגם לא קיים / לא נתמך / עמוס → מנסים את הבא
-      // מכסה נגמרה (429) → לכל דגם מכסה חינמית נפרדת, אז עוברים לבא
-      if (e.status === "skip") break;
-      if (e.status === "timeout") { if (++timeouts >= 2) break; continue; }
-      if (e.status === 429) { hitQuota = true; continue; }
-      if ([404, 500, 503].includes(e.status) || (e.status === 400 && /model|not found|not supported/i.test(e.body || ""))) continue;
-      break;
-    }
-  }
+  let last, hitQuota = false;
+  try {
+    const { json, model } = await askGemini({ key, models, text, pages: await shrinkPages(pages), signal });
+    return { ok: true, result: normalizeResult(json), model };
+  } catch (st) { last = st.last; hitQuota = st.hitQuota; }
   const detail = last ? ` (קוד: ${last.status || last.name || "?"}${last.body ? " · " + (safeMsg(last.body)) : ""})` : "";
   let message = "הזיהוי לא הצליח, אז ממלאים ידנית." + detail;
   if (signal?.aborted) return { ok: false, message: "דילגת על הזיהוי. ממלאים ידנית." };
@@ -217,15 +180,9 @@ Return ONLY JSON: {"items":[{"id":string,"topic":string,"folder":string,"sub":st
 Documents:
 ${JSON.stringify(items)}`;
   const models = [settings.geminiModel || FALLBACK_MODELS[0], ...FALLBACK_MODELS].filter((m, i, a) => m && a.indexOf(m) === i);
-  for (const m of models) {
-    try {
-      const out = await callModel(m, key, [], null, text);
-      const list = Array.isArray(out?.items) ? out.items : [];
-      return list.filter((x) => x && x.id).map((x) => ({ id: String(x.id), topic: String(x.topic || "").trim(), folder: String(x.folder || "").replace(/\s+/g, " ").trim().slice(0, 50), sub: String(x.sub || "").trim().slice(0, 40) }));
-    } catch (e) {
-      if (e.status === 429 || e.status === "timeout" || [404, 500, 503].includes(e.status) || (e.status === 400 && /model|not found|not supported/i.test(e.body || ""))) continue;
-      return null;
-    }
-  }
-  return null;
+  try {
+    const { json: out } = await askGemini({ key, models, text });
+    const list = Array.isArray(out?.items) ? out.items : [];
+    return list.filter((x) => x && x.id).map((x) => ({ id: String(x.id), topic: String(x.topic || "").trim(), folder: String(x.folder || "").replace(/\s+/g, " ").trim().slice(0, 50), sub: String(x.sub || "").trim().slice(0, 40) }));
+  } catch { return null; }
 }

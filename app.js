@@ -1,9 +1,9 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
-import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=12";
-import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=12";
-import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=12";
-import { exportExcel } from "./excel.js?v=12";
-import { scanPage, scannerSupported } from "./scanner.js?v=12";
+import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=13";
+import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=13";
+import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=13";
+import { exportExcel } from "./excel.js?v=13";
+import { scanPage, scannerSupported } from "./scanner.js?v=13";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -837,6 +837,7 @@ function bindInput(id, more) { $(id).addEventListener("change", (e) => { const f
 bindInput("inCamera", false); bindInput("inFile", false); bindInput("inCameraMore", true); bindInput("inFileMore", true);
 // סריקה עם מסגרת ירוקה, ולצידה צילום רגיל (כשהסורק לא תופס טוב)
 if (scannerSupported()) { $("upScan").hidden = false; $("upScanMore").hidden = false; }
+if (/iPhone|iPad|iPod/.test(navigator.userAgent)) $("iosTip").hidden = false;
 async function doScan(nativeInputId) {
   let page;
   try { page = await scanPage({ onNative: () => $(nativeInputId).click() }); }
