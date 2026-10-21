@@ -25,9 +25,9 @@ function thinkingFor(model) {
   if (noThink.has(model)) return null;
   return /gemini-3/.test(model) ? { thinkingLevel: "minimal" } : { thinkingBudget: 0 };
 }
-async function callOnce(model, key, parts, signal) {
-  const gen = { responseMimeType: "application/json", temperature: 0, maxOutputTokens: 4096 };
-  const think = thinkingFor(model); if (think) gen.thinkingConfig = think;
+async function callOnce(model, key, parts, signal, plain = false) {
+  const gen = { responseMimeType: "application/json", temperature: 0 };
+  const think = plain ? null : thinkingFor(model); if (think) gen.thinkingConfig = think;
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), CALL_TIMEOUT);
   const stop = () => ctl.abort(); signal?.addEventListener("abort", stop);
   let res;
@@ -42,16 +42,16 @@ async function callOnce(model, key, parts, signal) {
   } finally { clearTimeout(timer); signal?.removeEventListener("abort", stop); }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    // הדגם לא מכיר את ההגדרה "בלי חשיבה": מנסים שוב בלעדיה
-    if (res.status === 400 && think && /think/i.test(body)) { noThink.add(model); return callOnce(model, key, parts, signal); }
+    // כל שגיאת 400 כשביקשנו "בלי חשיבה": מנסים שוב מיד בדיוק כמו פעם (בלי ההגדרה), וזוכרים לא לבקש אותה שוב מהדגם הזה
+    if (res.status === 400 && think && !/API.?KEY|api key/i.test(body)) { noThink.add(model); return callOnce(model, key, parts, signal, true); }
     const err = new Error(`Gemini ${res.status}`); err.status = res.status; err.body = body; throw err;
   }
   const data = await res.json();
   const reply = (data.candidates?.[0]?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
   return JSON.parse(reply.slice(reply.indexOf("{"), reply.lastIndexOf("}") + 1));
 }
-const retryable = (e) => e instanceof SyntaxError || e.status === 429 || e.status === "timeout" || [404, 500, 503].includes(e.status)
-  || (e.status === 400 && /model|not found|not supported/i.test(e.body || ""));
+// מפתח לא תקין: אין טעם לנסות דגם אחר. כל שגיאה אחרת: מנסים את הדגם הבא
+const retryable = (e) => !((e.status === 400 || e.status === 403) && /API.?KEY|api key|permission|PERMISSION_DENIED/i.test(e.body || ""));
 
 // מחזיר {json, model}. בכישלון זורק {last, hitQuota, skipped}
 export function askGemini({ key, models, text, pages = [], signal }) {

@@ -1,7 +1,7 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
 import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=13";
 import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=13";
-import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=13";
+import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=14";
 import { exportExcel } from "./excel.js?v=13";
 import { scanPage, scannerSupported } from "./scanner.js?v=13";
 

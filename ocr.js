@@ -1,5 +1,5 @@
 // זיהוי מסמכים עם Google Gemini (מכסה חינמית)
-import { askGemini, shrinkPages } from "./fastgem.js?v=13";
+import { askGemini, shrinkPages } from "./fastgem.js?v=14";
 const API = "https://generativelanguage.googleapis.com/v1beta/models/";
 const FALLBACK_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
 
@@ -159,7 +159,7 @@ export async function recognize(pages, settings, signal, ctx = {}) {
   if (signal?.aborted) return { ok: false, message: "דילגת על הזיהוי. ממלאים ידנית." };
   if (last?.status === "timeout") message = "הזיהוי לא ענה בזמן (השרת עמוס כרגע). ממלאים ידנית, או מנסים שוב בעוד כמה דקות.";
   if (hitQuota || last?.status === 429) message = "נגמרה לעכשיו מכסת הזיהוי החינמית. ממלאים ידנית, או מנסים שוב בעוד כמה דקות. ";
-  else if (last?.status === 400 || last?.status === 403) message = "מפתח הזיהוי לא תקין או חסום. בדקי אותו בהגדרות. בינתיים ממלאים ידנית." + detail;
+  else if ((last?.status === 400 || last?.status === 403) && /API.?KEY|api key|PERMISSION/i.test(last.body || "")) message = "מפתח הזיהוי לא תקין או חסום. בדקי אותו בהגדרות. בינתיים ממלאים ידנית." + detail;
   else if (last instanceof SyntaxError) message = "התשובה מהזיהוי לא הייתה ברורה, אז ממלאים ידנית.";
   return { ok: false, message };
 }
