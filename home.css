@@ -265,3 +265,9 @@ input[type="date"]::-webkit-date-and-time-value { text-align: start; }
 
 .ios-tip { font-size: 13px; color: var(--ink-3); text-align: center; margin: 10px 4px 0; }
 #upStart[hidden] + .ios-tip { display: none; }
+
+/* "ייכנס ל…" במסך האישור */
+.dest-note:empty { display: none; }
+.dest-note { background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; font-size: 14px; display: grid; gap: 4px; margin-bottom: 10px; }
+.dest-line b { color: var(--turq-ink); }
+.dest-arch { color: #A04A0C; font-weight: 600; }

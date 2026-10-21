@@ -1,7 +1,7 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
 import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=13";
 import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=13";
-import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=14";
+import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=15";
 import { exportExcel } from "./excel.js?v=13";
 import { scanPage, scannerSupported } from "./scanner.js?v=13";
 
@@ -20,7 +20,7 @@ const TOPIC_ICON = { "בריאות": "🩺", "אחריות ומוצרים": "�
 const TOPIC_TINT = { "בריאות": "#FDE8E8", "אחריות ומוצרים": "#FFF1E6", "חשבוניות לבית": "#FEF9C3", "רכב": "#E3EEFB", "ביטוחים": "#E3F5EC", "מסמכים אישיים": "#FEF3C7", "לימודים": "#E8F0E0", "דירה ונכס": "#F3EAFB", "חברים": "#FCE7F3", "נסיעות": "#E0F2FE", "שונות": "#F1F4F6" };
 const TOPIC_SHORT = { "אחריות ומוצרים": "אחריות", "דירה ונכס": "דירות", "רכב": "רכבים", "מסמכים אישיים": "אישי", "חשבוניות לבית": "חשבונות הבית" };
 const PRIMARY = ["דירה ונכס", "בריאות", "מסמכים אישיים", "לימודים", "רכב", "נסיעות", "אחריות ומוצרים", "ביטוחים"];
-const SUB_ICON = { "בדיקות": "🩸", "רופאים": "👩‍⚕️", "ביטוח בריאות": "🛡️", "ביטוח חיים": "🛡️", "ביטוח פנסיוני": "🏦", "תעודת זהות": "🪪", "דרכון": "🛂", "רישיון נהיגה": "🚗", "תעודות": "📜", "אישורים": "📋", "תשלומים": "💳",
+const SUB_ICON = { "ביטוח בית ספר": "🎒", "ביטוח תאונות אישיות": "🩹", "ביטוח טלפון / מכשיר": "📱", "ביטוח חיית מחמד": "🐾", "בדיקות": "🩸", "רופאים": "👩‍⚕️", "ביטוח בריאות": "🛡️", "ביטוח חיים": "🛡️", "ביטוח פנסיוני": "🏦", "תעודת זהות": "🪪", "דרכון": "🛂", "רישיון נהיגה": "🚗", "תעודות": "📜", "אישורים": "📋", "תשלומים": "💳",
   "טיסות": "✈️", "מלון": "🏨", "ביטוח נסיעות": "🛡️", "השכרת רכב": "🚙", "כרטיסים": "🎟️", "אחר": "📄", "רישיון רכב": "📄", "ביטוח": "🛡️", "טיפולים ותיקונים": "🔧", "דוחות וקנסות": "🚨", "קנייה ומכירה": "🤝", "בדיקות דם": "🩸", "הדמיה וצילומים": "🩻", "רופא משפחה": "👩‍⚕️", "רופאים מומחים": "👨‍⚕️", "עיניים": "👁️", "שיניים": "🦷", "מרשמים ותרופות": "💊", "הפניות ואישורים": "📋", "אשפוז וניתוחים": "🏥", "חיסונים": "💉", "חוזים": "📝", "משכנתא": "🏦", "שיפוצים ותיקונים": "🔨", "מיסים ואגרות": "🏛️",
   "ביטוח דירה": "🏠", "ביטוח רכב": "🚗", "ביטוח בריאות": "🩺", "ביטוח חיים": "❤️", "ביטוח נסיעות": "✈️", "ביטוח משכנתא": "🏦", "חשמל": "⚡", "מים": "💧", "ארנונה": "🏛️", "גז": "🔥", "אינטרנט וטלפון": "🌐", "ועד בית": "🏢" };
 const FOLDER_ICON = { "רכב": "🚙", "בריאות": "👤", "מסמכים אישיים": "👤", "לימודים": "👤", "אחריות ומוצרים": "📦", "דירה ונכס": "🏠", "חברים": "🤝" };
@@ -149,6 +149,7 @@ const topics = () => {
 const isInsurance = (d) => d.topic === "ביטוחים" || /ביטוח/.test(d.sub || "");
 function insKind(d) {
   if (d.topic === "ביטוחים") return d.folder || "ביטוח אחר";
+  if (d.topic === "נסיעות") return "ביטוח נסיעות";
   if (d.topic === "רכב") return "ביטוח רכב";
   if (d.topic === "דירה ונכס") return "ביטוח דירה";
   return d.sub || "ביטוח";
@@ -959,6 +960,8 @@ function formFromResult(r) {
   const rule = ruleOf(f.topic);
   if (rule.by === "person") f.folder = f.folder ? matchPerson(f.folder) : ((r.people || []).map(matchPerson)[0] || "");
   if (f.folder) { const hit = (knownFolders()[f.topic] || []).find((x) => norm(x) === norm(f.folder)); if (hit) f.folder = hit; }
+  // נושא שלא קיים: "שונות" (לא ממציאים נושאים לבד)
+  if (f.topic && !topics().includes(f.topic)) f.topic = "שונות";
   { const fix = placementPatch({ ...r, topic: f.topic, folder: f.folder, sub: f.sub }); if (fix) Object.assign(f, fix); }
   // נסיעה: לחבר לנסיעה קיימת שהתאריכים שלה מתאימים, או להציע נסיעה חדשה
   const tr = r.trip;
@@ -1012,6 +1015,7 @@ function fillForm(f, rec) {
   $("rvRemindSel").value = f.remindSel || ""; $("rvRemindDate").value = f.remindDate || ""; $("rvRemindText").value = f.remindText || ""; syncRemindUi();
   checkDup();
   $("peopleList").innerHTML = people().map((p) => `<option value="${esc(p)}">`).join("");
+  updateDest();
 }
 function getForm() {
   return { title: $("rvTitle").value.trim(), topic: $("rvTopic").value, topicNew: $("rvTopicNew").value.trim(), folder: $("rvFolder").value.replace(/\s+/g, " ").trim(), sub: $("rvSub").value.replace(/\s+/g, " ").trim(), people: $("rvPeople").value, date: $("rvDate").value,
@@ -1044,6 +1048,24 @@ function syncFolderUi() {
     ...(tp === "ביטוחים" ? [...(kf["דירה ונכס"] || []), ...(kf["רכב"] || []), ...people()] : [])])];
   $("subList").innerHTML = subs.map((x) => `<option value="${esc(x)}">`).join("");
 }
+// "ייכנס ל…": רואים לפני השמירה בדיוק לאן המסמך הולך, והאם הוא ייכנס לארכיון
+function updateDest() {
+  const f = getForm();
+  let topic = f.topic === OTHER_TOPIC ? f.topicNew : f.topic;
+  if (!topic) { $("rvDest").innerHTML = ""; return; }
+  const ppl = f.people.split(/[,،]/).map((x) => x.trim()).filter(Boolean);
+  let folder = f.folder || (ruleOf(topic).by === "person" ? ppl[0] || "" : ""), sub = f.sub || "";
+  if (ruleOf(topic).trips) folder = "";
+  const fix = placementPatch({ topic, folder, sub, people: ppl, title: f.title, details: f.details });
+  if (fix) ({ topic, folder, sub } = fix);
+  const trip = f.tripId && f.tripId !== NEW_TRIP ? tripById(f.tripId)?.name : f.tripNew?.name;
+  const path = [topicShort(topic), ruleOf(topic).trips ? trip : folder, sub].filter(Boolean).join(" › ");
+  const past = f.until && f.until < today();
+  $("rvDest").innerHTML = `<div class="dest-line">📂 ייכנס ל: <b>${esc(path)}</b></div>`
+    + (past ? `<div class="dest-arch">🗄 התוקף הסתיים ב-${fmtDate(f.until)}, אז המסמך ייכנס לארכיון. עדיין בתוקף? תקני את "רלוונטי עד".</div>` : "");
+}
+["rvTopic", "rvTopicNew", "rvFolder", "rvSub", "rvPeople", "rvUntil", "rvTitle", "rvTrip"].forEach((id) => { $(id).addEventListener("input", updateDest); $(id).addEventListener("change", updateDest); });
+
 // בנושאים לפי אדם: אם אין עדיין תיקייה, השם הראשון ב"של מי"
 $("rvPeople").addEventListener("change", () => { if (ruleOf($("rvTopic").value).by === "person" && !$("rvFolder").value) $("rvFolder").value = matchPerson($("rvPeople").value.split(/[,،]/)[0].trim()); });
 // אחריות: אם יש תאריך קנייה ואין "רלוונטי עד", מציעים שנה
@@ -1076,7 +1098,7 @@ function formToDoc(f) {
   if (ruleOf(topic).trips) folder = "";
   let tp = topic, sb = f.sub || "";
   // כל דבר אצל הבעלים שלו (ביטוח רכב ברכב, חשבון חשמל בדירה…)
-  const fix = placementPatch({ topic: tp, folder, sub: sb, people: ppl });
+  const fix = placementPatch({ topic: tp, folder, sub: sb, people: ppl, title, details: f.details });
   if (fix) { tp = fix.topic; folder = fix.folder; sb = fix.sub; }
   if (folder) folder = canonicalFolder(tp, folder);
   return { title, topic: tp, folder, sub: sb, people: ppl, date: f.date, provider: f.provider, amount, relevantUntil: f.until, relevantReason: f.until ? (f.reason || "בתוקף עד") : "",
@@ -1193,7 +1215,7 @@ $("upReview").addEventListener("submit", async (e) => {
     btn.disabled = false; renderBatchNav(); render(); return;
   }
   btn.disabled = false;
-  toast(saved > 1 ? `נשמרו ${saved} מסמכים` : `נשמר ב: ${pathText(savedDocs[0])}`, 3500);
+  toast(saved > 1 ? `נשמרו ${saved} מסמכים` : `${isArchived(savedDocs[0]) ? "נשמר בארכיון של" : "נשמר ב"}: ${pathText(savedDocs[0])}`, 3500);
   up.batch = null; $("uploadDlg").close(); render();
   await offerReplace(savedDocs);
 });
