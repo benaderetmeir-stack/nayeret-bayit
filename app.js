@@ -1,8 +1,8 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
 import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=14";
 import { fileToPages, makeThumb, makeLite, isPdf, loadImage } from "./images.js?v=14";
-import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=15";
-import { exportExcel } from "./excel.js?v=13";
+import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=16";
+import { exportExcel } from "./excel.js?v=14";
 import { scanPage, scannerSupported } from "./scanner.js?v=14";
 
 const $ = (id) => document.getElementById(id);
@@ -184,6 +184,42 @@ function folderOf(d) {
   return ruleOf(d.topic).by === "person" && d.people?.length ? d.people[0] : "";
 }
 const subOf = (d) => d.sub || "";
+/* ---- סכום עם המטבע הנכון ---- */
+const CUR = { ILS: "₪", USD: "$", EUR: "€", GBP: "£" };
+const curSym = (d) => CUR[d.currency] || "₪";
+const money = (d) => `${curSym(d)}${fmtMoney(d.amount)}`;
+/* ---- כותרת ענייניות: "מה זה – של מה / של מי" ---- */
+// של מי / של מה המסמך: כתובת, רכב, אדם או נסיעה
+function ownerOf(d) {
+  if (d.topic === "ביטוחים") return subOf(d) || d.people?.[0] || "";
+  if (ruleOf(d.topic).trips) return "";   // הנסיעה כבר מופיעה בכרטיס (✈️)
+  const f = folderOf(d);
+  if (!f || ruleOf(d.topic).fixed?.includes(f)) return "";
+  return f;
+}
+const GENERIC = /^(ביטוח|ביטוחים|לביטוח|חברה|חברת|בע"?מ|ישראל|בעמ)$/;
+// בלי שם החברה בסוף הכותרת (היא מופיעה בשורה הקטנה)
+function cleanTitle(d) {
+  let t = (d.title || "מסמך").trim();
+  const prov = new Set(String(d.provider || "").split(/[\s,.\-–]+/).filter((w) => w.length > 1 && !GENERIC.test(w)));
+  if (prov.size) {
+    const words = t.split(/\s+/);
+    while (words.length > 2 && prov.has(words[words.length - 1].replace(/[,.]/g, ""))) words.pop();
+    t = words.join(" ").replace(/\s*[-–]\s*$/, "");
+  }
+  return t;
+}
+const squash = (s) => String(s || "").replace(/["'״׳\s,.-]/g, "");
+function titleOf(d) {
+  const t = cleanTitle(d), o = ownerOf(d);
+  if (!o) return t;
+  // כתובת עד הפסיק, רכב בלי מספר הרישוי
+  const short = o.split(/,| · /)[0].trim();
+  if (squash(t).includes(squash(short))) return t;
+  const ow = short.split(/\s+/).filter((w) => w.length > 1), tw = new Set(t.split(/\s+/));
+  if (ow.length && ow.filter((w) => tw.has(w)).length / ow.length >= 0.5) return t;   // "אחריות מכונת כביסה" + "מכונת כביסה LG"
+  return `${t} – ${short}`;
+}
 const pathText = (d) => [topicShort(d.topic || ""), folderOf(d), subOf(d)].filter(Boolean).join(" › ");
 function knownFolders() {
   const m = {};
@@ -233,7 +269,7 @@ const norm = (s) => String(s ?? "").toLowerCase().replace(/[֑-ׇ]/g, "").replac
 function haystack(d) {
   if (d._h) return d._h;
   const t = tripById(d.tripId);
-  d._h = norm([d.title, d.topic, d.folder, d.sub, (d.people || []).join(" "), d.provider, d.details, d.note, d.fullText, d.relevantReason,
+  d._h = norm([d.title, ownerOf(d), d.topic, d.folder, d.sub, (d.people || []).join(" "), d.provider, d.details, d.note, d.fullText, d.relevantReason,
     t ? t.name : "", d.date, fmtDate(d.date), d.relevantUntil, fmtDate(d.relevantUntil), d.amount != null ? String(d.amount) : ""].join(" "));
   return d._h;
 }
@@ -241,8 +277,8 @@ function matches(d, q) {
   const h = haystack(d);
   return norm(q).split(" ").filter(Boolean).every((tok) => {
     if (h.includes(tok)) return true;
-    const n = parseFloat(tok.replace(/[₪,]/g, ""));
-    return Number.isFinite(n) && /^[\d.,₪]+$/.test(tok) && d.amount != null && Math.trunc(d.amount) === Math.trunc(n);
+    const n = parseFloat(tok.replace(/[₪$€£,]/g, ""));
+    return Number.isFinite(n) && /^[\d.,₪$€£]+$/.test(tok) && d.amount != null && Math.trunc(d.amount) === Math.trunc(n);
   });
 }
 
@@ -264,7 +300,7 @@ function reminders() {
     const ru = effectiveUntil(d), n = daysUntil(ru);
     if (n > REMIND_AHEAD_DAYS || n < -14 || (d.keepActive && n < 0)) continue;
     const reason = ru !== d.relevantUntil ? "סוף ההארכה" : (d.relevantReason || "בתוקף עד");
-    out.push({ key: `d:${d.id}:${ru}`, ico: topicIcon(d.topic), days: n, docId: d.id, title: d.title || "מסמך",
+    out.push({ key: `d:${d.id}:${ru}`, ico: topicIcon(d.topic), days: n, docId: d.id, title: titleOf(d),
       sub: n < 0 ? `${reason}: עבר לפני ${-n} ימים (${fmtDate(ru)})` : n === 0 ? `${reason}: היום` : `${reason}: בעוד ${n} ימים (${fmtDate(ru)})`,
       cal: { title: `${reason}: ${d.title || "מסמך"}`, date: n > 30 ? addDays(ru, -30) : today(), details: `${reason} ב-${fmtDate(ru)}. מתוך ניירת בית.` } });
   }
@@ -339,17 +375,17 @@ function render() {
 function docCard(d, opts = {}) {
   const v = validity(d), t = tripById(d.tripId), th = state.thumbs[d.id], arch = isArchived(d);
   const path = opts.path === false ? (opts.sub && subOf(d) ? subOf(d) : "") : pathText(d);
-  const ppl = (d.people || []).filter((p) => p !== folderOf(d));
+  const ppl = (d.people || []).filter((p) => p !== folderOf(d) && p !== ownerOf(d));
   const apps = appendicesOf(d);
   const card = `<button type="button" class="doc-card${arch ? " is-arch" : ""}" data-doc="${d.id}">
     ${th ? `<img class="thumb" src="${th}" alt="">` : `<span class="thumb"></span>`}
     <span class="d-main">
-      <span class="d-title">${esc(d.title || "מסמך")}</span>
+      <span class="d-title">${esc(opts.path === false && !opts.owner ? cleanTitle(d) : titleOf(d))}</span>
       ${path ? `<span class="d-path">${opts.path === false ? folderIcon(d.topic, path) : topicIcon(d.topic)} ${esc(path)}</span>` : ""}
       <span class="d-meta">${d.date ? `<span>${fmtDate(d.date)}</span>` : ""}${d.provider ? `<span>· ${esc(d.provider)}</span>` : ""}${ppl.map((p) => `<span class="tag tag-person">${esc(p)}</span>`).join("")}</span>
       ${v || t || d.replacedBy ? `<span class="d-meta">${d.replacedBy ? `<span class="tag tag-old">הוחלף במסמך חדש</span>` : v ? `<span class="tag ${v.cls}">${esc(v.text)}</span>` : ""}${t ? `<span class="tag tag-trip">✈️ ${esc(t.name)}</span>` : ""}</span>` : ""}
     </span>
-    ${d.amount != null ? `<span class="d-amt">₪${fmtMoney(d.amount)}</span>` : ""}
+    ${d.amount != null ? `<span class="d-amt">${money(d)}</span>` : ""}
   </button>`;
   if (!apps.length) return card;
   // הנספח מוצג כמסמך רגיל (עם תמונה), מתחת למסמך המקורי, עם הערה קטנה
@@ -526,7 +562,7 @@ function renderInsurance() {
       if (t) return `<button type="button" class="owner-link" data-trip="${t.id}">✈️ לכל המסמכים של הנסיעה ${esc(t.name)} <span aria-hidden="true">‹</span></button>`;
       return "";
     };
-    $("looseList").innerHTML = list.map((d) => `<div class="doc-with-link">${docCard(d)}${ownerLink(d)}</div>`).join("");
+    $("looseList").innerHTML = list.map((d) => `<div class="doc-with-link">${docCard(d, { path: false, owner: true })}${ownerLink(d)}</div>`).join("");
     $("linkBox").hidden = true;
   }
   const archHere = kind == null ? arch : arch.filter((d) => insKind(d) === kind);
@@ -766,7 +802,7 @@ async function backfillLites() {
 async function openViewer(d) {
   if (!d) return;
   view.doc = d; view.zoom = 1;
-  $("vwTitle").textContent = d.title || "מסמך";
+  $("vwTitle").textContent = titleOf(d);
   const v = validity(d), t = tripById(d.tripId);
   $("vwMeta").innerHTML = [
     `<span>${topicIcon(d.topic)} <b>${esc([d.topic, folderOf(d), subOf(d)].filter(Boolean).join(" › "))}</b></span>`,
@@ -776,7 +812,7 @@ async function openViewer(d) {
     d.people?.length ? `<span>של: <b>${esc(d.people.join(", "))}</b></span>` : "",
     d.date ? `<span>תאריך: <b>${fmtDate(d.date)}</b></span>` : "",
     d.provider ? `<span>גורם: <b>${esc(d.provider)}</b></span>` : "",
-    d.amount != null ? `<span>סכום: <b>₪${fmtMoney(d.amount)}</b></span>` : "",
+    d.amount != null ? `<span>סכום: <b>${money(d)}</b></span>` : "",
     v ? `<span class="tag ${v.cls}">${esc(v.text)}</span>` : "",
     t ? `<span class="tag tag-trip">✈️ ${esc(t.name)}</span>` : "",
     d.details ? `<span class="vw-details">פירוט: <b>${esc(d.details)}</b></span>` : "",
@@ -849,7 +885,7 @@ async function docPdf(d, pages) {
     if (i) pdf.addPage("a4");
     pdf.addImage(pages[i], "JPEG", (W - img.naturalWidth * r) / 2, (H - img.naturalHeight * r) / 2, img.naturalWidth * r, img.naturalHeight * r);
   }
-  const name = `${(d.title || "מסמך").replace(/[\\/:*?"<>|]+/g, "")}${d.date ? " " + fmtDate(d.date).replace(/\//g, "-") : ""}.pdf`;
+  const name = `${titleOf(d).replace(/[\\/:*?"<>|]+/g, "")}${d.date ? " " + fmtDate(d.date).replace(/\//g, "-") : ""}.pdf`;
   return { blob: pdf.output("blob"), name };
 }
 function downloadBlob(blob, name) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000); }
@@ -893,7 +929,7 @@ function openCleanup() {
   cleanChoice.clear();
   const list = tidyCandidates().sort((a, b) => (a.relevantUntil || "9").localeCompare(b.relevantUntil || "9"));
   $("cleanList").innerHTML = list.map((d) => `<li data-cid="${d.id}">
-    <span class="c-main"><span class="c-title">${topicIcon(d.topic)} ${esc(d.title || "מסמך")}</span><br><span class="c-sub">${esc(pathText(d))} · ${d.replacedBy ? "הוחלף במסמך חדש" : `${esc(d.relevantReason || "רלוונטי עד")} ${fmtDate(d.relevantUntil)}`}</span></span>
+    <span class="c-main"><span class="c-title">${topicIcon(d.topic)} ${esc(titleOf(d))}</span><br><span class="c-sub">${esc(pathText(d))} · ${d.replacedBy ? "הוחלף במסמך חדש" : `${esc(d.relevantReason || "רלוונטי עד")} ${fmtDate(d.relevantUntil)}`}</span></span>
     <button class="btn btn-ghost btn-sm" data-cview="${d.id}">צפייה</button>
     <span class="seg-mini"><button type="button" data-c="del">למחוק</button><button type="button" data-c="keep">לשמור</button></span>
   </li>`).join("");
@@ -1054,7 +1090,7 @@ $("rvDrop").onclick = () => { const d = up.batch.drafts[up.batch.i]; d.drop = !d
 
 // טופס האישור כאובייקט פשוט: קל לשמור ולהחזיר בדפדוף
 function formFromDoc(d) {
-  return { title: d.title || "", topic: d.topic || "", folder: d.folder || (d.id ? folderOf(d) : ""), sub: d.sub || "", people: (d.people || []).join(", "), date: d.date || "", provider: d.provider || "", amount: d.amount ?? "",
+  return { title: d.title || "", topic: d.topic || "", folder: d.folder || (d.id ? folderOf(d) : ""), sub: d.sub || "", people: (d.people || []).join(", "), date: d.date || "", provider: d.provider || "", amount: d.amount ?? "", currency: d.currency || "ILS",
     until: d.relevantUntil || "", reason: d.relevantReason || "", details: d.details || "", note: d.note || "", fullText: d.fullText || "", tripId: d.tripId || "", tripNew: null,
     remindSel: d.remindAt ? "date" : "", remindDate: d.remindAt || "", remindText: d.remindText || "" };
 }
@@ -1113,7 +1149,7 @@ function fillForm(f, rec) {
   if (rec) { r.hidden = false; r.textContent = rec.ok ? "זיהיתי את הפרטים הבאים. בדקי, תקני במידת הצורך ואשרי." : rec.message; } else r.hidden = true;
   $("rvTitle").value = f.title; setTopicOptions(f.topic); $("rvTopicNew").value = f.topicNew || "";
   $("rvFolder").value = f.folder || ""; $("rvSub").value = f.sub || ""; syncFolderUi();
-  $("rvPeople").value = f.people; $("rvDate").value = f.date; $("rvProvider").value = f.provider; $("rvAmount").value = f.amount;
+  $("rvPeople").value = f.people; $("rvDate").value = f.date; $("rvProvider").value = f.provider; $("rvAmount").value = f.amount; $("rvCur").value = f.currency || "ILS";
   $("rvUntil").value = f.until; $("rvReason").value = f.reason; $("rvDetails").value = f.details; $("rvNote").value = f.note;
   $("rvFullText").textContent = f.fullText || "(אין)"; up.fullText = f.fullText || "";
   setTripOptions(f);
@@ -1124,7 +1160,7 @@ function fillForm(f, rec) {
 }
 function getForm() {
   return { title: $("rvTitle").value.trim(), topic: $("rvTopic").value, topicNew: $("rvTopicNew").value.trim(), folder: $("rvFolder").value.replace(/\s+/g, " ").trim(), sub: $("rvSub").value.replace(/\s+/g, " ").trim(), people: $("rvPeople").value, date: $("rvDate").value,
-    provider: $("rvProvider").value.trim(), amount: $("rvAmount").value, until: $("rvUntil").value, reason: $("rvReason").value.trim(), details: $("rvDetails").value.trim(),
+    provider: $("rvProvider").value.trim(), amount: $("rvAmount").value, currency: $("rvCur").value, until: $("rvUntil").value, reason: $("rvReason").value.trim(), details: $("rvDetails").value.trim(),
     note: $("rvNote").value.trim(), fullText: up.fullText || "", tripId: $("rvTrip").value, tripNew: up.tripNew,
     remindSel: $("rvRemindSel").value, remindDate: $("rvRemindDate").value, remindText: $("rvRemindText").value.trim() };
 }
@@ -1206,7 +1242,7 @@ function formToDoc(f) {
   const fix = placementPatch({ topic: tp, folder, sub: sb, people: ppl, title, details: f.details });
   if (fix) { tp = fix.topic; folder = fix.folder; sb = fix.sub; }
   if (folder) folder = canonicalFolder(tp, folder);
-  return { title, topic: tp, folder, sub: sb, people: ppl, date: f.date, provider: f.provider, amount, relevantUntil: f.until, relevantReason: f.until ? (f.reason || "בתוקף עד") : "",
+  return { title, topic: tp, folder, sub: sb, people: ppl, date: f.date, provider: f.provider, amount, currency: amount != null && f.currency !== "ILS" ? f.currency : "", relevantUntil: f.until, relevantReason: f.until ? (f.reason || "בתוקף עד") : "",
     details: f.details, note: f.note, fullText: f.fullText, tripId: f.tripId, remindAt, remindText: remindAt ? f.remindText : "" };
 }
 // "הזכר לי": בעוד שבוע / חודש / שנה, או תאריך מסוים
@@ -1435,7 +1471,7 @@ async function autoSort(all) {
 async function runExcel(docs, scope) {
   toast("מכין אקסל…", 6000);
   try {
-    const f = await exportExcel(docs, { scope, appUrl: location.origin + location.pathname, folderOf, subOf, isArchived, isInsurance, insKind, trips: state.settings.trips || [], topicsOrder: topics() });
+    const f = await exportExcel(docs, { scope, appUrl: location.origin + location.pathname, folderOf, subOf, isArchived, isInsurance, insKind, titleOf, cleanTitle, trips: state.settings.trips || [], topicsOrder: topics() });
     downloadBlob(f.blob, f.name); toast("האקסל ירד");
   } catch (e) { console.error(e); toast("לא הצלחתי להכין אקסל. בדקי חיבור ונסי שוב.", 4500); }
 }

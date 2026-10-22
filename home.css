@@ -271,3 +271,6 @@ input[type="date"]::-webkit-date-and-time-value { text-align: start; }
 .dest-note { background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; font-size: 14px; display: grid; gap: 4px; margin-bottom: 10px; }
 .dest-line b { color: var(--turq-ink); }
 .dest-arch { color: #A04A0C; font-weight: 600; }
+.amt-row { display: flex; gap: 6px; min-width: 0; }
+.amt-row input { flex: 1; }
+.field .amt-row select { width: 64px; flex: none; padding-inline: 8px; }

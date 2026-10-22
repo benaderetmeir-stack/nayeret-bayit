@@ -49,6 +49,9 @@ function sectionTitle(ws, r, text, n) {
   c.alignment = { horizontal: "right" }; ws.getRow(r).height = 22;
 }
 const MONEY = '#,##0 "₪"';
+const FMT = { USD: '#,##0 "$"', EUR: '#,##0 "€"', GBP: '#,##0 "£"' };
+const moneyFmt = (d) => FMT[d.currency] || MONEY;
+const isIls = (d) => !FMT[d.currency];
 
 export async function exportExcel(docs, ctx) {
   await loadExcelJS();
@@ -91,22 +94,24 @@ export async function exportExcel(docs, ctx) {
     ins.forEach((d, i) => {
       const row = ws.getRow(r++);
       const kind = [ctx.insKind(d), d.topic === "ביטוחים" ? subOf(d) : folderOf(d)].filter(Boolean).join(" · ");
-      row.values = [d.title || "פוליסה", kind, d.provider || "", (d.people || []).join(", "), asDate(d.relevantUntil), d.amount ?? null];
-      row.getCell(5).numFmt = "dd/mm/yyyy"; row.getCell(6).numFmt = MONEY;
+      row.values = [(ctx.titleOf ? ctx.titleOf(d) : d.title) || "פוליסה", kind, d.provider || "", (d.people || []).join(", "), asDate(d.relevantUntil), d.amount ?? null];
+      row.getCell(5).numFmt = "dd/mm/yyyy"; row.getCell(6).numFmt = moneyFmt(d);
       row.eachCell((c) => { c.font = font(); if (i % 2) c.fill = fill(FILL.zebra); });
     });
     if (!ins.length) { ws.getCell(r, 1).value = "אין ביטוחים בתוקף במערכת"; ws.getCell(r, 1).font = font({ color: { argb: INK2 } }); r++; }
     else {
       const row = ws.getRow(r++);
       row.getCell(1).value = 'סה"כ בשנה';
-      row.getCell(6).value = { formula: `SUM(F${insFirst}:F${r - 2})`, result: ins.reduce((s, d) => s + (d.amount || 0), 0) };
+      // סכום בשקלים בלבד (ביטוח בדולרים/יורו לא נכנס לסה"כ)
+      row.getCell(6).value = { formula: ins.map((d, k) => isIls(d) ? `F${insFirst + k}` : "").filter(Boolean).length ? `SUM(${ins.map((d, k) => isIls(d) ? `F${insFirst + k}` : "").filter(Boolean).join(",")})` : "0", result: ins.filter(isIls).reduce((s, d) => s + (d.amount || 0), 0) };
+      if (ins.some((d) => !isIls(d))) row.getCell(1).value = 'סה"כ בשנה (בשקלים)';
       row.getCell(6).numFmt = MONEY;
       row.eachCell((c) => { c.font = font({ bold: true, color: { argb: ORANGE } }); c.border = { top: { style: "medium", color: { argb: ORANGE } } }; });
     }
     r++;
 
     // 3. הוצאות לכל רכב לפי שנה (כולל ארכיון)
-    const carDocs = docs.filter((d) => d.topic === "רכב" && d.amount != null && d.date && folderOf(d));
+    const carDocs = docs.filter((d) => d.topic === "רכב" && d.amount != null && isIls(d) && d.date && folderOf(d));
     if (carDocs.length) {
       const cars = [...new Set(carDocs.map(folderOf))].sort();
       const years = [...new Set(carDocs.map((d) => d.date.slice(0, 4)))].sort();
@@ -150,8 +155,8 @@ export async function exportExcel(docs, ctx) {
     list.forEach((d, i) => {
       const r = 4 + i, row = ws.getRow(r), st = status(d);
       const folder = tp === "נסיעות" ? tripName(d.tripId) : folderOf(d);
-      row.values = [folder, subOf(d), d.title || "מסמך", (d.people || []).join(", "), asDate(d.date), asDate(d.relevantUntil), st.t, d.amount ?? null, d.provider || "", [d.details, d.note].filter(Boolean).join(" · "), null];
-      row.getCell(5).numFmt = "dd/mm/yyyy"; row.getCell(6).numFmt = "dd/mm/yyyy"; row.getCell(8).numFmt = MONEY;
+      row.values = [folder, subOf(d), (ctx.cleanTitle ? ctx.cleanTitle(d) : d.title) || "מסמך", (d.people || []).join(", "), asDate(d.date), asDate(d.relevantUntil), st.t, d.amount ?? null, d.provider || "", [d.details, d.note].filter(Boolean).join(" · "), null];
+      row.getCell(5).numFmt = "dd/mm/yyyy"; row.getCell(6).numFmt = "dd/mm/yyyy"; row.getCell(8).numFmt = moneyFmt(d);
       row.eachCell({ includeEmpty: true }, (c, k) => {
         if (k > COLS.length) return;
         c.font = font({ color: { argb: isArchived(d) ? "FF9A8F86" : INK } });

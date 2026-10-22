@@ -69,13 +69,14 @@ function prompt(topics, people, today, folders) {
   return `You read personal and family paperwork (Hebrew or English) for a home document archive in Israel.
 Today is ${today}. Look at the page images (all pages belong to ONE document) and return ONLY a JSON object:
 {
-  "title": string,            // short clear Hebrew title, e.g. "בדיקת דם – ספירה מלאה", "אחריות מקרר סמסונג", "טיסה תל אביב–רומא", "פוליסת ביטוח רכב"
+  "title": string,            // short clear Hebrew title saying WHAT the document is, e.g. "חידוש ביטוח דירה", "ביטוח מקיף לרכב", "בדיקת דם – ספירה מלאה", "אחריות מקרר סמסונג", "טיסה תל אביב–רומא". Do NOT put the company / insurer name in the title (it goes in "provider"), and do NOT put the address, car or person it belongs to (the app adds them)
   "topic": string,            // EXACTLY one of: ${topics.map((t) => JSON.stringify(t)).join(", ")}. If none fits, use "שונות". Never invent a new topic
   "people": string[],         // names of the people the document is about (patient, insured, passenger, owner). Known family names: ${people.length ? people.join(", ") : "(none yet)"} — reuse the exact known spelling when it is the same person
   "date": "YYYY-MM-DD",       // the document's main date (issue / purchase / test / flight date); "" if none
   "monthOnly": boolean,       // true if the date has only month and year
   "provider": string,         // who issued it: clinic / doctor / store / insurer / airline / hotel / school…
   "amount": number | null,    // main amount paid, if any
+  "currency": "ILS" | "USD" | "EUR" | "GBP",  // currency of the amount: $ / דולר / USD → "USD", € / יורו / EUR → "EUR", £ → "GBP", otherwise "ILS"
   "relevantUntil": "YYYY-MM-DD", // until when the document matters: warranty end, policy end, last flight/hotel date, prescription or referral expiry, passport/ID expiry. "" if it stays relevant indefinitely
   "relevantReason": string,   // short Hebrew label for that date: "סוף אחריות", "סוף הפוליסה", "תאריך הטיסה", "תוקף המרשם", "תוקף הדרכון"...
   "warrantyMonths": number | null, // for purchases with warranty: the warranty length in months if printed, else null
@@ -132,6 +133,7 @@ export function normalizeResult(r) {
     date,
     provider: String(r.provider || "").trim().slice(0, 60),
     amount: num(r.amount),
+    currency: ["USD", "EUR", "GBP"].includes(String(r.currency || "").toUpperCase()) ? String(r.currency).toUpperCase() : "ILS",
     relevantUntil: isoDate(r.relevantUntil),
     relevantReason: String(r.relevantReason || "").trim().slice(0, 30),
     folder: String(r.folder || "").replace(/\s+/g, " ").trim().slice(0, 50),
