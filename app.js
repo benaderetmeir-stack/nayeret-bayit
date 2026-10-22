@@ -1,9 +1,9 @@
 // ניירת בית: כל המסמכים של הבית והמשפחה
-import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=13";
-import { fileToPages, makeThumb, isPdf, loadImage } from "./images.js?v=13";
+import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHash, tokenMinutesLeft, googleEmail, googleSignOut } from "./api.js?v=14";
+import { fileToPages, makeThumb, makeLite, isPdf, loadImage } from "./images.js?v=14";
 import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=15";
 import { exportExcel } from "./excel.js?v=13";
-import { scanPage, scannerSupported } from "./scanner.js?v=13";
+import { scanPage, scannerSupported } from "./scanner.js?v=14";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -132,6 +132,7 @@ function enterApp(data) {
   $("loginView").hidden = true; $("appView").hidden = false;
   setView(state.view || "home", { replace: true });
   state.api.thumbs().then((t) => { state.thumbs = t || {}; render(); }).catch((e) => console.warn("thumbs", e));
+  setTimeout(backfillLites, 20000);
   // קישור מהאקסל: #doc=… פותח את המסמך
   const m = (pendingHash || location.hash).match(/^#doc=(.+)$/); pendingHash = "";
   if (m) { history.replaceState(null, "", location.pathname + location.search); const d = docById(decodeURIComponent(m[1])); if (d) openViewer(d); }
@@ -332,6 +333,7 @@ function render() {
   else if (state.view === "docs") renderDocs();
   else if (state.view === "trips") renderTrips();
   else if (state.view === "settings") renderSettings();
+  schedulePrefetch();
 }
 
 function docCard(d, opts = {}) {
@@ -693,9 +695,73 @@ $("sLogout").onclick = () => { if (isGoogle()) { googleSignOut(); lsSet("nb_mode
 
 /* ======================= צפייה במסמך ======================= */
 const view = { doc: null, pages: [], zoom: 1 };
+/* ---- פתיחה מהירה: דף אחרי דף, במקביל, עם עותק קריאה קל. הכול בזיכרון בלבד, כלום לא נשמר בטלפון ---- */
+const fileCache = new Map();   // מזהה קובץ ← הבטחה לתמונה (עד 40 אחרונים)
+const fileQueue = []; let fileActive = 0;
+function fetchFile(fid, urgent = false) {
+  let e = fileCache.get(fid);
+  if (e) { fileCache.delete(fid); fileCache.set(fid, e); if (urgent && e.job) e.job.urgent = true; return e.p; }
+  e = {}; const job = { fid, urgent, entry: e };
+  e.p = new Promise((res, rej) => { job.res = res; job.rej = rej; }); e.job = job;
+  e.p.catch(() => { if (fileCache.get(fid) === e) fileCache.delete(fid); });
+  fileCache.set(fid, e);
+  while (fileCache.size > 40) fileCache.delete(fileCache.keys().next().value);
+  fileQueue.push(job); pumpFiles();
+  return e.p;
+}
+function pumpFiles() {
+  while (fileActive < 4 && fileQueue.length) {
+    const u = fileQueue.findIndex((j) => j.urgent), job = fileQueue.splice(u >= 0 ? u : 0, 1)[0];
+    job.entry.job = null; fileActive++;
+    state.api.file(job.fid).then(job.res, job.rej).finally(() => { fileActive--; pumpFiles(); });
+  }
+}
+const hasFiles = (d) => !!(d && d.fileIds?.length && state.api.file);
+const hasLite = (d) => hasFiles(d) && d.liteIds?.length === d.fileIds.length;
+// הדפים באיכות המלאה (להורדה, שיתוף, הדפסה)
 async function getPages(id) {
   if (state.pages.has(id)) return state.pages.get(id);
+  const d = docById(id);
+  if (hasFiles(d)) return Promise.all(d.fileIds.map((f) => fetchFile(f, true)));
   const p = await state.api.pages(id); state.pages.set(id, p); return p;
+}
+// מתחיל להוריד את הדף הראשון של מסמכים שעל המסך, עוד לפני שלוחצים
+function prefetchVisible() {
+  const cards = [...document.querySelectorAll("[data-doc]")].filter((el) => !el.closest("dialog") && el.offsetParent && el.getBoundingClientRect().top < innerHeight).slice(0, 6);
+  for (const el of cards) { const d = docById(el.dataset.doc); if (hasFiles(d) && !state.pages.has(d.id)) fetchFile(hasLite(d) ? d.liteIds[0] : d.fileIds[0]).catch(() => {}); }
+}
+let prefetchT = 0;
+const schedulePrefetch = () => { clearTimeout(prefetchT); prefetchT = setTimeout(prefetchVisible, 400); };
+// נגיעה בכרטיס: מתחילים מיד את כל הדפים
+document.addEventListener("pointerdown", (e) => {
+  const c = e.target.closest("[data-doc]"); if (!c || c.closest("dialog")) return;
+  const d = docById(c.dataset.doc); if (!hasFiles(d) || state.pages.has(d.id)) return;
+  d.fileIds.forEach((f, i) => fetchFile(hasLite(d) ? d.liteIds[i] : f, true).catch(() => {}));
+}, { passive: true });
+// מסמך ישן בלי עותק קל: אחרי שנפתח, מכינים לו עותק קל (מהדפים שכבר ירדו)
+async function addLiteFor(d) {
+  if (!hasFiles(d) || hasLite(d) || d._liteBusy || !state.api.addLite) return;
+  d._liteBusy = true;
+  try {
+    const pages = await Promise.all(d.fileIds.map((f) => fetchFile(f)));
+    const lites = await Promise.all(pages.map(makeLite));
+    const nd = await state.api.addLite(d.id, lites);
+    if (nd?.liteIds?.length) d.liteIds = nd.liteIds;
+  } catch (e) { console.warn("lite", e); }
+  finally { d._liteBusy = false; }
+}
+// במחשב: מכינים ברקע עותקים קלים לכל המסמכים הישנים, אחד אחד
+let liteRun = false;
+async function backfillLites() {
+  if (liteRun || state.api.demo || matchMedia("(pointer: coarse)").matches) return;
+  liteRun = true;
+  for (const d of state.docs.slice()) {
+    if (!hasFiles(d) || hasLite(d) || !docById(d.id)) continue;
+    await addLiteFor(d);
+    for (const f of d.fileIds) fileCache.delete(f);   // לא לתפוס זיכרון
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  liteRun = false;
 }
 async function openViewer(d) {
   if (!d) return;
@@ -720,16 +786,54 @@ async function openViewer(d) {
   $("vwCal").hidden = !d.relevantUntil && !d.remindAt;
   $("vwActive").hidden = !isArchived(d) || isAppendix(d);
   $("vwArchive").hidden = isArchived(d) || isAppendix(d) || !(d.keepActive || d.relevantUntil);
-  $("vwBody").innerHTML = `<div class="busy"><span class="spinner"></span>טוען…</div>`;
+  const token = view.token = {};
+  view.sharp = [];
   $("viewDlg").showModal();
-  try { view.pages = await getPages(d.id); } catch (e) { console.error(e); view.pages = []; $("vwBody").innerHTML = `<div class="empty"><p>לא הצלחתי לטעון את המסמך. בדקי חיבור ונסי שוב.</p></div>`; return; }
+  if (!hasFiles(d) || state.pages.has(d.id)) {
+    // מסמך שרק עכשיו נשמר (כבר בזיכרון), או מצב ישן בלי מזהי קבצים
+    view.pages = []; $("vwBody").innerHTML = `<div class="busy"><span class="spinner"></span>טוען…</div>`;
+    try { view.pages = await getPages(d.id); } catch (e) { console.error(e); if (view.token === token) $("vwBody").innerHTML = `<div class="empty"><p>לא הצלחתי לטעון את המסמך. בדקי חיבור ונסי שוב.</p></div>`; return; }
+    if (view.token !== token) return;
+    view.sharp = view.pages.map(() => true); renderViewerPages(); return;
+  }
+  // דף אחרי דף: כל דף מופיע ברגע שהגיע
+  const lite = hasLite(d);
+  view.pages = d.fileIds.map(() => "");
   renderViewerPages();
+  const loads = d.fileIds.map((fid, i) => fetchFile(lite ? d.liteIds[i] : fid, true).then((src) => {
+    if (view.token !== token || view.sharp[i]) return;
+    view.pages[i] = src; view.sharp[i] = !lite; setViewerPage(i);
+  }).catch((e) => { console.error(e); if (view.token === token && !view.pages[i]) setViewerPage(i, true); }));
+  if (!lite) Promise.all(loads).then(() => addLiteFor(d));
+  if (view.zoom > 1) loadSharp();
+}
+// בהגדלה: מחליפים את העותק הקל במקור החד
+function loadSharp() {
+  const d = view.doc, token = view.token;
+  if (!hasLite(d)) return;
+  d.fileIds.forEach((fid, i) => {
+    if (view.sharp[i]) return;
+    fetchFile(fid, true).then((src) => { if (view.token !== token) return; view.pages[i] = src; view.sharp[i] = true; setViewerPage(i); }).catch(() => {});
+  });
+}
+const pageInner = (p, i, failed) => p ? `<img src="${p}" alt="דף ${i + 1}">` : failed ? `<div class="vw-wait">הדף לא נטען. בדקי חיבור ופתחי שוב.</div>` : `<div class="vw-wait"><span class="spinner"></span></div>`;
+function setViewerPage(i, failed = false) {
+  const box = $("vwBody").querySelector(`.vw-page[data-i="${i}"] .vw-img`);
+  if (box) box.innerHTML = pageInner(view.pages[i], i, failed);
 }
 function renderViewerPages() {
-  $("vwBody").innerHTML = view.pages.map((p, i) => `<figure class="vw-page" style="width:${Math.round(100 * view.zoom)}%"><img src="${p}" alt="דף ${i + 1}">${view.pages.length > 1 ? `<figcaption class="vw-page-bar">דף ${i + 1} מתוך ${view.pages.length}</figcaption>` : ""}</figure>`).join("");
+  const n = view.pages.length;
+  $("vwBody").innerHTML = view.pages.map((p, i) => `<figure class="vw-page" data-i="${i}" style="width:${Math.round(100 * view.zoom)}%">${n > 1 ? `<figcaption class="vw-page-bar">דף ${i + 1} מתוך ${n}</figcaption>` : ""}<div class="vw-img">${pageInner(p, i)}</div></figure>`).join("");
 }
-$("vwZoomIn").onclick = () => { view.zoom = Math.min(3, view.zoom + 0.25); renderViewerPages(); };
+$("vwZoomIn").onclick = () => { view.zoom = Math.min(3, view.zoom + 0.25); renderViewerPages(); loadSharp(); };
 $("vwZoomOut").onclick = () => { view.zoom = Math.max(0.5, view.zoom - 0.25); renderViewerPages(); };
+// להורדה, שיתוף, הדפסה ועריכה: תמיד הדפים המקוריים
+async function fullPages() {
+  const d = view.doc;
+  if (view.pages.length && view.sharp.every(Boolean) && view.sharp.length === view.pages.length) return view.pages;
+  toast("מכין את המסמך…", 1500);
+  return getPages(d.id);
+}
 $("vwCal").onclick = () => {
   const d = view.doc;
   if (d.remindAt) return window.open(calUrl({ title: d.remindText || d.title || "תזכורת", date: d.remindAt, details: `${d.title || ""}. מתוך ניירת בית.` }), "_blank", "noopener");
@@ -749,16 +853,17 @@ async function docPdf(d, pages) {
   return { blob: pdf.output("blob"), name };
 }
 function downloadBlob(blob, name) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000); }
-$("vwDownload").onclick = async () => { const f = await docPdf(view.doc, view.pages); downloadBlob(f.blob, f.name); };
+$("vwDownload").onclick = async () => { const f = await docPdf(view.doc, await fullPages()); downloadBlob(f.blob, f.name); };
 $("vwShare").onclick = async () => {
-  const f = await docPdf(view.doc, view.pages);
+  const f = await docPdf(view.doc, await fullPages());
   const file = new File([f.blob], f.name, { type: "application/pdf" });
   if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: view.doc.title }); return; } catch (e) { if (e.name === "AbortError") return; } }
   downloadBlob(f.blob, f.name); toast("הקובץ ירד. אפשר לצרף אותו להודעה או למייל.");
 };
-$("vwPrint").onclick = () => {
+$("vwPrint").onclick = async () => {
   const w = window.open("", "_blank"); if (!w) return toast("הדפדפן חסם חלון חדש");
-  w.document.write(`<!doctype html><html dir="rtl"><head><title>${esc(view.doc.title)}</title><style>body{margin:0}img{width:100%;page-break-after:always;display:block}</style></head><body>${view.pages.map((p) => `<img src="${p}">`).join("")}<script>window.onload=()=>{window.print();}<\/script></body></html>`);
+  const pages = await fullPages();
+  w.document.write(`<!doctype html><html dir="rtl"><head><title>${esc(view.doc.title)}</title><style>body{margin:0}img{width:100%;page-break-after:always;display:block}</style></head><body>${pages.map((p) => `<img src="${p}">`).join("")}<script>window.onload=()=>{window.print();}<\/script></body></html>`);
   w.document.close();
 };
 // "עדיין בתוקף": מחזיר מסמך מהארכיון (אפשר עם תאריך חדש)
@@ -774,7 +879,7 @@ $("vwArchive").onclick = async () => {
   try { await state.api.saveDoc({ id: d.id, ...patch }); Object.assign(d, patch); $("viewDlg").close(); toast("עבר לארכיון"); render(); }
   catch (e) { console.error(e); toast("השמירה נכשלה, נסי שוב", 4000); }
 };
-$("vwEdit").onclick = () => { $("viewDlg").close(); openUpload({ edit: view.doc, pages: view.pages }); };
+$("vwEdit").onclick = async () => { const pages = view.pages.every(Boolean) ? view.pages : await fullPages(); $("viewDlg").close(); openUpload({ edit: view.doc, pages }); };
 $("vwDelete").onclick = async () => {
   const d = view.doc;
   if (!(await confirmBox(`למחוק את "${d.title || "המסמך"}"? הוא יעבור לסל האשפה של הדרייב ויישאר שם 30 יום.`, "מחק"))) return;
@@ -1205,7 +1310,8 @@ $("upReview").addEventListener("submit", async (e) => {
       btn.textContent = todo.length > 1 ? `שומר ${saved + 1} מתוך ${todo.length}…` : "שומר…";
       await learnFrom(doc, tripNew);
       const thumb = await makeThumb(d.pages[0], 180);
-      const res = await state.api.saveDoc(doc, d.pages, thumb);
+      const lites = await Promise.all(d.pages.map(makeLite));
+      const res = await state.api.saveDoc(doc, d.pages, thumb, lites);
       state.docs.push(res); state.thumbs[res.id] = thumb; state.pages.set(res.id, d.pages);
       d.saved = true; saved++; savedDocs.push(res);
     }
@@ -1376,7 +1482,7 @@ async function seedDemo() {
   for (const it of items) {
     const img = sampleImage(it.title, [it.provider || "", it.date ? fmtDate(it.date) : "", it.details || "", it.amount ? "סכום: ₪" + fmtMoney(it.amount) : ""].filter(Boolean));
     const base = { tripId: "", amount: null, relevantUntil: "", relevantReason: "", details: "", note: "", fullText: "", people: [] };
-    await state.api.saveDoc({ ...base, ...it }, [img], await makeThumb(img, 180));
+    await state.api.saveDoc({ ...base, ...it }, [img], await makeThumb(img, 180), [await makeLite(img)]);
   }
 }
 

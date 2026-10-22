@@ -17,7 +17,9 @@ export class RemoteApi {
   login(k) { this.k = k; return this.call("login"); }
   thumbs() { return this.call("thumbs").then((r) => r.thumbs || {}); }
   pages(id) { return this.call("pages", { id }).then((r) => r.pages || []); }
-  saveDoc(doc, pages, thumb) { return this.call("saveDoc", { doc, pages, thumb }).then((r) => r.doc); }
+  file(fid) { return this.call("file", { fid }).then((r) => r.data); }
+  addLite(id, lites) { return this.call("addLite", { id, lites }).then((r) => r.doc); }
+  saveDoc(doc, pages, thumb, lites) { return this.call("saveDoc", { doc, pages, thumb, lites }).then((r) => r.doc); }
   deleteDocs(ids) { return this.call("delete", { ids }); }
   saveSettings(patch) { return this.call("settings", { patch }).then((r) => r.settings); }
   setPassword(newK) { return this.call("setPassword", { newK }); }
@@ -25,7 +27,7 @@ export class RemoteApi {
 
 // מצב תצוגה: הכול בזיכרון, לבדיקה בלי חיבור
 export class DemoApi {
-  constructor() { this.demo = true; this.k = ""; this.docs = []; this.pagesById = {}; this.thumbsById = {}; this.settings = {}; this.pw = ""; }
+  constructor() { this.demo = true; this.k = ""; this.docs = []; this.pagesById = {}; this.litesById = {}; this.thumbsById = {}; this.settings = {}; this.pw = ""; }
   async login(k) {
     if (!this.pw) this.pw = k;
     if (k !== this.pw) { const e = new Error("bad-password"); e.code = "bad-password"; throw e; }
@@ -34,11 +36,16 @@ export class DemoApi {
   }
   async thumbs() { return { ...this.thumbsById }; }
   async pages(id) { return (this.pagesById[id] || []).slice(); }
-  async saveDoc(doc, pages, thumb) {
+  async file(fid) { await new Promise((r) => setTimeout(r, 150)); const [id, kind, i] = fid.split("|"); return (kind === "l" ? this.litesById : this.pagesById)[id][Number(i)]; }
+  async addLite(id, lites) { this.litesById[id] = lites.slice(); const d = this.docs.find((x) => x.id === id); d.liteIds = lites.map((_, i) => `${id}|l|${i}`); return { ...d }; }
+  async saveDoc(doc, pages, thumb, lites) {
     const d = { ...doc };
     if (!d.id) { d.id = "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); d.createdAt = Date.now(); }
     d.updatedAt = Date.now();
-    if (pages && pages.length) { this.pagesById[d.id] = pages.slice(); d.pageCount = pages.length; }
+    if (pages && pages.length) {
+      this.pagesById[d.id] = pages.slice(); d.pageCount = pages.length; d.fileIds = pages.map((_, i) => `${d.id}|o|${i}`);
+      if (lites && lites.length === pages.length) { this.litesById[d.id] = lites.slice(); d.liteIds = lites.map((_, i) => `${d.id}|l|${i}`); } else d.liteIds = [];
+    }
     if (thumb) this.thumbsById[d.id] = thumb;
     const i = this.docs.findIndex((x) => x.id === d.id);
     if (i >= 0) this.docs[i] = { ...this.docs[i], ...d }; else this.docs.push(d);
@@ -149,18 +156,35 @@ export class DriveApi {
     for (const fid of (d && d.fileIds) || []) { try { out.push(await blobToDataUrl(await (await this.req(`${DRIVE}/${fid}?alt=media`)).blob())); } catch (e) { if (e.code === "auth") throw e; } }
     return out;
   }
-  async saveDoc(doc, pages, thumb) {
+  async liteFolder() { if (!this.lite) this.lite = await this.folder("תצוגה מהירה", this.root); return this.lite; }
+  async file(fid) { return blobToDataUrl(await (await this.req(`${DRIVE}/${fid}?alt=media`)).blob()); }
+  async upPages(folder, id, pages, suffix) { return Promise.all(pages.map((p, i) => this.create(`${id}-${i + 1}${suffix}.jpg`, folder, dataUrlToBlob(p), "image/jpeg"))); }
+  // כתיבות לרשימת המסמכים אחת אחרי השנייה, כדי ששתי שמירות לא ידרסו זו את זו
+  serial(fn) { const run = (this.chain || Promise.resolve()).then(fn, fn); this.chain = run.catch(() => {}); return run; }
+  addLite(id, lites) { return this.serial(() => this._addLite(id, lites)); }
+  saveDoc(...a) { return this.serial(() => this._saveDoc(...a)); }
+  deleteDocs(ids) { return this.serial(() => this._deleteDocs(ids)); }
+  async _addLite(id, lites) {
+    await this.init();
+    const docs = await this.readJson("index.json", []), d = docs.find((x) => x.id === id);
+    if (!d || lites.length !== (d.fileIds || []).length) throw new Error("no-doc");
+    if (d.liteIds?.length) return d;
+    d.liteIds = await this.upPages(await this.liteFolder(), id, lites, "-lite");
+    await this.writeJson("index.json", docs);
+    return d;
+  }
+  async _saveDoc(doc, pages, thumb, lites) {
     await this.init();
     doc = { ...doc };
     const docs = await this.readJson("index.json", []);
     if (!doc.id) { doc.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7); doc.createdAt = Date.now(); }
     doc.updatedAt = Date.now();
     if (pages && pages.length) {
-      const old = (docs.find((x) => x.id === doc.id) || {}).fileIds || [];
-      const ids = [];
-      for (let i = 0; i < pages.length; i++) ids.push(await this.create(`${doc.id}-${i + 1}.jpg`, this.files, dataUrlToBlob(pages[i]), "image/jpeg"));
-      doc.fileIds = ids; doc.pageCount = pages.length;
-      for (const fid of old) await this.trash(fid);
+      const prev = docs.find((x) => x.id === doc.id) || {};
+      doc.fileIds = await this.upPages(this.files, doc.id, pages, "");
+      doc.liteIds = lites && lites.length === pages.length ? await this.upPages(await this.liteFolder(), doc.id, lites, "-lite") : [];
+      doc.pageCount = pages.length;
+      for (const fid of [...(prev.fileIds || []), ...(prev.liteIds || [])]) await this.trash(fid);
     }
     const i = docs.findIndex((x) => x.id === doc.id);
     if (i >= 0) docs[i] = { ...docs[i], ...doc }; else docs.push(doc);
@@ -168,10 +192,10 @@ export class DriveApi {
     if (thumb) { const t = await this.readJson("thumbs.json", {}); t[doc.id] = thumb; await this.writeJson("thumbs.json", t); }
     return i >= 0 ? docs[i] : doc;
   }
-  async deleteDocs(ids) {
+  async _deleteDocs(ids) {
     await this.init();
     const docs = await this.readJson("index.json", []), t = await this.readJson("thumbs.json", {});
-    for (const d of docs.filter((x) => ids.includes(x.id))) for (const fid of d.fileIds || []) await this.trash(fid);
+    for (const d of docs.filter((x) => ids.includes(x.id))) for (const fid of [...(d.fileIds || []), ...(d.liteIds || [])]) await this.trash(fid);
     ids.forEach((id) => delete t[id]);
     await this.writeJson("index.json", docs.filter((x) => !ids.includes(x.id)));
     await this.writeJson("thumbs.json", t);

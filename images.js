@@ -36,6 +36,12 @@ export function compressCanvasSource(source, w, h) {
   return drawScaled(source, w, h, 1000).toDataURL("image/jpeg", 0.5);
 }
 
+// עותק קריאה קל (בערך פי 4 קטן מהמקור) לפתיחה מהירה
+export async function makeLite(dataUrl) {
+  const img = await loadImage(dataUrl);
+  return drawScaled(img, img.naturalWidth, img.naturalHeight, 1200).toDataURL("image/jpeg", 0.6);
+}
+
 export async function makeThumb(dataUrl, side = 220) {
   const img = await loadImage(dataUrl);
   return drawScaled(img, img.naturalWidth, img.naturalHeight, side).toDataURL("image/jpeg", 0.7);
