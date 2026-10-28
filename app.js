@@ -3,6 +3,7 @@ import { RemoteApi, DemoApi, sha256Hex, DriveApi, googleAuthUrl, takeAuthFromHas
 import { fileToPages, makeThumb, makeLite, isPdf, loadImage } from "./images.js?v=14";
 import { recognize, DEFAULT_TOPICS, addMonths, ruleOf, classifyFolders, placementFix, OLD_TOPICS } from "./ocr.js?v=16";
 import { exportExcel } from "./excel.js?v=14";
+import * as Off from "./offline.js?v=1";
 import { scanPage, scannerSupported } from "./scanner.js?v=14";
 
 const $ = (id) => document.getElementById(id);
@@ -32,7 +33,7 @@ const CLEAN_AFTER_DAYS = 182;   // חצי שנה אחרי שהמסמך הפסי�
 const REMIND_AHEAD_DAYS = 60;
 
 const state = { api: null, settings: {}, docs: [], thumbs: {}, view: "home", pages: new Map(), tripOpen: null,
-  nav: { topic: null, folder: null, sub: null, more: false }, archOpen: false, attnAll: false, sorting: false };
+  nav: { topic: null, folder: null, sub: null, more: false }, archOpen: false, attnAll: false, sorting: false, offline: false };
 
 /* ======================= הודעות ואישור ======================= */
 let toastT;
@@ -67,9 +68,10 @@ function onAuthNeeded() {
 async function startGoogle() {
   state.api = new DriveApi({ onAuthNeeded });
   $("demoBanner").hidden = true;
-  try { enterApp(await state.api.login()); }
+  try { enterApp(await withTimeout(state.api.login())); }
   catch (e) {
     console.error(e);
+    if (e.code !== "auth" && !e.status && await enterOffline()) return;   // אין רשת: מצב בלי אינטרנט
     if (e.code === "auth") return;
     showLogin(); toast("לא הצלחתי להתחבר לגוגל דרייב. נסי שוב.", 4500);
   }
@@ -96,6 +98,7 @@ async function boot() {
     }
     if (back?.ok || lsGet("nb_mode") === "google") {
       lsSet("nb_mode", "google");
+      if (!navigator.onLine && await enterOffline()) return;
       if (tokenMinutesLeft() > 2) return startGoogle();
       return googleRedirect("none");   // נגמר תוקף הכניסה: חידוש שקט, בלי ללחוץ שוב
     }
@@ -105,8 +108,12 @@ async function boot() {
   $("demoBanner").hidden = !state.api.demo;
   const saved = lsGet("nb_k");
   if (saved && !state.api.demo) {
-    try { return enterApp(await state.api.login(saved)); }
-    catch (e) { if (e.code !== "bad-password") { showLogin(); return toast("אין חיבור לשרת. נסי שוב.", 4000); } lsSet("nb_k", ""); }
+    if (!navigator.onLine && await enterOffline()) return;
+    try { state.api.k = saved; return enterApp(await withTimeout(state.api.login(saved))); }
+    catch (e) {
+      if (e.code !== "bad-password") { if (await enterOffline()) return; showLogin(); return toast("אין חיבור לשרת. נסי שוב.", 4000); }
+      lsSet("nb_k", ""); Off.clearAll();
+    }
   }
   showLogin();
 }
@@ -129,10 +136,12 @@ $("loginForm").addEventListener("submit", async (e) => {
 function enterApp(data) {
   state.settings = data.settings || {};
   state.docs = (data.docs || []).filter(Boolean);
+  state.offline = false; document.body.classList.remove("is-offline"); $("offlineBanner").hidden = true;
   $("loginView").hidden = true; $("appView").hidden = false;
   setView(state.view || "home", { replace: true });
-  state.api.thumbs().then((t) => { state.thumbs = t || {}; render(); }).catch((e) => console.warn("thumbs", e));
+  state.api.thumbs().then((t) => { state.thumbs = t || {}; render(); scheduleSnapshot(); }).catch((e) => console.warn("thumbs", e));
   setTimeout(backfillLites, 20000);
+  setTimeout(syncOffline, 6000);
   // קישור מהאקסל: #doc=… פותח את המסמך
   const m = (pendingHash || location.hash).match(/^#doc=(.+)$/); pendingHash = "";
   if (m) { history.replaceState(null, "", location.pathname + location.search); const d = docById(decodeURIComponent(m[1])); if (d) openViewer(d); }
@@ -370,6 +379,7 @@ function render() {
   else if (state.view === "trips") renderTrips();
   else if (state.view === "settings") renderSettings();
   schedulePrefetch();
+  scheduleSnapshot();
 }
 
 function docCard(d, opts = {}) {
@@ -382,7 +392,7 @@ function docCard(d, opts = {}) {
     <span class="d-main">
       <span class="d-title">${esc(opts.path === false && !opts.owner ? cleanTitle(d) : titleOf(d))}</span>
       ${path ? `<span class="d-path">${opts.path === false ? folderIcon(d.topic, path) : topicIcon(d.topic)} ${esc(path)}</span>` : ""}
-      <span class="d-meta">${d.date ? `<span>${fmtDate(d.date)}</span>` : ""}${d.provider ? `<span>· ${esc(d.provider)}</span>` : ""}${ppl.map((p) => `<span class="tag tag-person">${esc(p)}</span>`).join("")}</span>
+      <span class="d-meta">${d.date ? `<span>${fmtDate(d.date)}</span>` : ""}${d.provider ? `<span>· ${esc(d.provider)}</span>` : ""}${ppl.map((p) => `<span class="tag tag-person">${esc(p)}</span>`).join("")}${state.offline && offlineWant(d) ? `<span class="tag tag-valid">📲 שמור בטלפון</span>` : ""}</span>
       ${v || t || d.replacedBy ? `<span class="d-meta">${d.replacedBy ? `<span class="tag tag-old">הוחלף במסמך חדש</span>` : v ? `<span class="tag ${v.cls}">${esc(v.text)}</span>` : ""}${t ? `<span class="tag tag-trip">✈️ ${esc(t.name)}</span>` : ""}</span>` : ""}
     </span>
     ${d.amount != null ? `<span class="d-amt">${money(d)}</span>` : ""}
@@ -727,7 +737,7 @@ $("sResort").onclick = async () => {
   if (!(await confirmBox("לסדר מחדש את כל המסמכים לתיקיות? שמות תיקיות ששינית ידנית עלולים להשתנות.", "לסדר מחדש", false))) return;
   autoSort(true);
 };
-$("sLogout").onclick = () => { if (isGoogle()) { googleSignOut(); lsSet("nb_mode", ""); } lsSet("nb_k", ""); state.api.k = ""; state.docs = []; state.thumbs = {}; showLogin(); };
+$("sLogout").onclick = () => { Off.clearAll(); if (isGoogle()) { googleSignOut(); lsSet("nb_mode", ""); } lsSet("nb_k", ""); state.api.k = ""; state.docs = []; state.thumbs = {}; showLogin(); };
 
 /* ======================= צפייה במסמך ======================= */
 const view = { doc: null, pages: [], zoom: 1 };
@@ -749,8 +759,26 @@ function pumpFiles() {
   while (fileActive < 4 && fileQueue.length) {
     const u = fileQueue.findIndex((j) => j.urgent), job = fileQueue.splice(u >= 0 ? u : 0, 1)[0];
     job.entry.job = null; fileActive++;
-    state.api.file(job.fid).then(job.res, job.rej).finally(() => { fileActive--; pumpFiles(); });
+    loadFile(job.fid).then(job.res, job.rej).finally(() => { fileActive--; pumpFiles(); });
   }
+}
+// קודם מהטלפון (מסמך ששמור לשימוש בלי אינטרנט), אחר כך מהדרייב
+function altFid(fid) {
+  for (const d of state.docs) {
+    const i = (d.liteIds || []).indexOf(fid); if (i >= 0) return d.fileIds?.[i];
+    const j = (d.fileIds || []).indexOf(fid); if (j >= 0) return d.liteIds?.[j];
+  }
+  return null;
+}
+async function loadFile(fid) {
+  if (!state.api.demo) {
+    const here = await Off.getFile(fid); if (here) return here;
+    if (state.offline) {
+      const alt = altFid(fid), other = alt && await Off.getFile(alt); if (other) return other;
+      const e = new Error("offline"); e.code = "offline"; throw e;
+    }
+  }
+  return state.api.file(fid);
 }
 const hasFiles = (d) => !!(d && d.fileIds?.length && state.api.file);
 const hasLite = (d) => hasFiles(d) && d.liteIds?.length === d.fileIds.length;
@@ -789,7 +817,7 @@ async function addLiteFor(d) {
 // במחשב: מכינים ברקע עותקים קלים לכל המסמכים הישנים, אחד אחד
 let liteRun = false;
 async function backfillLites() {
-  if (liteRun || state.api.demo || matchMedia("(pointer: coarse)").matches) return;
+  if (liteRun || state.api.demo || state.offline || matchMedia("(pointer: coarse)").matches) return;
   liteRun = true;
   for (const d of state.docs.slice()) {
     if (!hasFiles(d) || hasLite(d) || !docById(d.id)) continue;
@@ -839,7 +867,7 @@ async function openViewer(d) {
   const loads = d.fileIds.map((fid, i) => fetchFile(lite ? d.liteIds[i] : fid, true).then((src) => {
     if (view.token !== token || view.sharp[i]) return;
     view.pages[i] = src; view.sharp[i] = !lite; setViewerPage(i);
-  }).catch((e) => { console.error(e); if (view.token === token && !view.pages[i]) setViewerPage(i, true); }));
+  }).catch((e) => { if (e.code !== "offline") console.error(e); if (view.token === token && !view.pages[i]) setViewerPage(i, true); }));
   if (!lite) Promise.all(loads).then(() => addLiteFor(d));
   if (view.zoom > 1) loadSharp();
 }
@@ -852,7 +880,7 @@ function loadSharp() {
     fetchFile(fid, true).then((src) => { if (view.token !== token) return; view.pages[i] = src; view.sharp[i] = true; setViewerPage(i); }).catch(() => {});
   });
 }
-const pageInner = (p, i, failed) => p ? `<img src="${p}" alt="דף ${i + 1}">` : failed ? `<div class="vw-wait">הדף לא נטען. בדקי חיבור ופתחי שוב.</div>` : `<div class="vw-wait"><span class="spinner"></span></div>`;
+const pageInner = (p, i, failed) => p ? `<img src="${p}" alt="דף ${i + 1}">` : failed ? `<div class="vw-wait">${state.offline ? "אין אינטרנט, והמסמך הזה לא שמור בטלפון. הוא ייפתח כשיחזור חיבור." : "הדף לא נטען. בדקי חיבור ופתחי שוב."}</div>` : `<div class="vw-wait"><span class="spinner"></span></div>`;
 function setViewerPage(i, failed = false) {
   const box = $("vwBody").querySelector(`.vw-page[data-i="${i}"] .vw-img`);
   if (box) box.innerHTML = pageInner(view.pages[i], i, failed);
@@ -1419,6 +1447,7 @@ function placementPatch(d) {
   return p;
 }
 async function autoSort(all) {
+  if (state.offline) return;
   if (state.sorting) return;
   state.sorting = true;
   let n = 0;
@@ -1522,11 +1551,76 @@ async function seedDemo() {
   }
 }
 
+/* ======================= בלי אינטרנט ======================= */
+const withTimeout = (p, ms = 9000) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+// רשימת המסמכים נשמרת בטלפון אחרי כל שינוי, כדי שהאפליקציה תיפתח גם בלי אינטרנט
+let snapT = 0;
+function scheduleSnapshot() {
+  if (state.offline || !state.api || state.api.demo || !state.docs.length) return;
+  clearTimeout(snapT);
+  snapT = setTimeout(() => { Off.saveSnapshot({ settings: state.settings, docs: state.docs, thumbs: state.thumbs, google: isGoogle() }); clearTimeout(syncT); syncT = setTimeout(syncOffline, 4000); }, 1500);
+}
+async function enterOffline() {
+  const snap = await Off.loadSnapshot();
+  if (!snap || !snap.docs?.length) return false;
+  if (!state.api) {
+    const no = () => Promise.reject(Object.assign(new Error("offline"), { code: "offline" }));
+    state.api = { demo: false, google: !!snap.google, file: no, pages: no, saveDoc: no, deleteDocs: no, saveSettings: no, thumbs: async () => snap.thumbs || {} };
+  }
+  state.settings = snap.settings || {}; state.docs = snap.docs; state.thumbs = snap.thumbs || {};
+  state.offline = true; document.body.classList.add("is-offline");
+  $("offlineBanner").hidden = false; $("demoBanner").hidden = true;
+  $("loginView").hidden = true; $("appView").hidden = false;
+  setView(state.view || "home", { replace: true });
+  return true;
+}
+// כשהאינטרנט חוזר: נכנסים מחדש כרגיל
+window.addEventListener("online", () => {
+  if (!state.offline) return;
+  const go = () => location.reload();
+  if (!document.querySelector("dialog[open]")) go();
+  else toast("האינטרנט חזר. סגרי את החלון כדי להתעדכן.", 4000);
+  document.addEventListener("close", () => state.offline && !document.querySelector("dialog[open]") && go(), true);
+});
+// אילו מסמכים נשמרים בטלפון: נסיעות קרובות (באיכות מלאה, בשביל ברקודים), תעודות, רכב וביטוחים בתוקף
+const OFF_PERSONAL = /תעודת זהות|דרכון|רישיון נהיגה|רשיון נהיגה/;
+function tripSoon(t) { return !!t && (t.from || "") <= addDays(today(), 30) && (t.to || t.from || "") >= addDays(today(), -2); }
+function offlineWant(d) {
+  const base = isAppendix(d) ? docById(d.extends) : d;
+  const t = tripById(d.tripId);
+  if (tripSoon(t)) return "sharp";
+  if (d.topic === "נסיעות" && d.relevantUntil && d.relevantUntil >= addDays(today(), -2) && (d.date || d.relevantUntil) <= addDays(today(), 30)) return "sharp";
+  if (isArchived(base)) return "";
+  if (d.topic === "מסמכים אישיים" && OFF_PERSONAL.test(`${d.sub || ""} ${d.title || ""}`)) return "lite";
+  if (d.topic === "רכב" && /רישיון רכב|רשיון רכב|ביטוח/.test(`${d.sub || ""} ${d.title || ""}`)) return "lite";
+  if (isInsurance(d)) return "lite";
+  return "";
+}
+let syncT = 0, syncing = false;
+async function syncOffline() {
+  if (syncing || state.offline || !state.api || state.api.demo || !state.api.file || !navigator.onLine) return;
+  syncing = true;
+  try {
+    const want = new Set();
+    for (const d of state.docs) {
+      const w = offlineWant(d); if (!w || !d.fileIds?.length) continue;
+      const ids = w === "lite" && d.liteIds?.length === d.fileIds.length ? d.liteIds : d.fileIds;
+      ids.forEach((f) => want.add(f));
+    }
+    const have = new Set(await Off.fileKeys());
+    await Off.delFiles([...have].filter((f) => !want.has(f)));
+    for (const f of want) {
+      if (have.has(f) || state.offline) continue;
+      try { await Off.putFile(f, await state.api.file(f)); } catch (e) { if (e.code === "auth") break; console.warn("offline save", e); }
+    }
+  } finally { syncing = false; }
+}
+
 /* ======================= עדכון אוטומטי של הגרסה ======================= */
 const MY_VERSION = new URL(import.meta.url).searchParams.get("v") || "";
 let lastCheck = 0;
 async function checkForUpdate() {
-  if (!MY_VERSION || Date.now() - lastCheck < 60000) return;
+  if (state.offline || !MY_VERSION || Date.now() - lastCheck < 60000) return;
   lastCheck = Date.now();
   try {
     const html = await (await fetch("./index.html", { cache: "reload" })).text();
@@ -1540,4 +1634,5 @@ async function checkForUpdate() {
 setTimeout(checkForUpdate, 3000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkForUpdate(); });
 
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("sw", e));
 boot();

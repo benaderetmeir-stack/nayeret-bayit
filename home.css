@@ -274,3 +274,7 @@ input[type="date"]::-webkit-date-and-time-value { text-align: start; }
 .amt-row { display: flex; gap: 6px; min-width: 0; }
 .amt-row input { flex: 1; }
 .field .amt-row select { width: 64px; flex: none; padding-inline: 8px; }
+/* בלי אינטרנט: רק צפייה */
+.offline-banner { background: #3A2E25; color: #fff; text-align: center; font-size: 13px; font-weight: 600; padding: 6px 16px; }
+body.is-offline #fab, body.is-offline #vwEdit, body.is-offline #vwDelete, body.is-offline #vwActive, body.is-offline #vwArchive,
+body.is-offline #browseExcel, body.is-offline .tab[data-view="settings"], body.is-offline #browseRename, body.is-offline #tripEdit { display: none !important; }
