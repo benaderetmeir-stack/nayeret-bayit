@@ -177,7 +177,7 @@ const appendicesOf = (d) => state.docs.filter((x) => x.extends === d.id);
 const isAppendix = (d) => !!(d.extends && docById(d.extends));
 function effectiveUntil(d) {
   let u = d.relevantUntil || "";
-  for (const a of appendicesOf(d)) if ((a.relevantUntil || "") > u) u = a.relevantUntil;
+  for (const a of appendicesOf(d)) if (!a.attach && (a.relevantUntil || "") > u) u = a.relevantUntil;   // מסמך מצורף (תעודת זהות…) לא מאריך
   return u;
 }
 // ארכיון: מה שתוקפו עבר (כולל הארכות), או שהוחלף במסמך חדש. "עדיין בתוקף" (keepActive) גובר על הכול
@@ -220,7 +220,7 @@ function cleanTitle(d) {
 }
 const squash = (s) => String(s || "").replace(/["'״׳\s,.-]/g, "");
 function titleOf(d) {
-  const t = cleanTitle(d), o = ownerOf(d);
+  const t = cleanTitle(d), o = d.attach ? "" : ownerOf(d);   // מסמך מצורף (ת"ז של המשכיר) לא "של" הדירה
   if (!o) return t;
   // כתובת עד הפסיק, רכב בלי מספר הרישוי
   const short = o.split(/,| · /)[0].trim();
@@ -399,7 +399,7 @@ function docCard(d, opts = {}) {
   </button>`;
   if (!apps.length) return card;
   // הנספח מוצג כמסמך רגיל (עם תמונה), מתחת למסמך המקורי, עם הערה קטנה
-  return `<div class="doc-group">${card}${apps.map((a) => `<div class="app-note">📎 נספח / הארכה של המסמך הזה</div>${docCard(a, { path: false })}`).join("")}</div>`;
+  return `<div class="doc-group">${card}${apps.map((a) => `<div class="app-note">${a.attach ? "📎 מצורף למסמך הזה" : "📎 נספח / הארכה של המסמך הזה"}</div>${docCard(a, { path: false })}`).join("")}</div>`;
 }
 document.addEventListener("click", (e) => { const c = e.target.closest("[data-doc]"); if (c && !e.target.closest("dialog")) openViewer(docById(c.dataset.doc)); });
 
@@ -835,8 +835,8 @@ async function openViewer(d) {
   $("vwMeta").innerHTML = [
     `<span>${topicIcon(d.topic)} <b>${esc([d.topic, folderOf(d), subOf(d)].filter(Boolean).join(" › "))}</b></span>`,
     isArchived(d) ? `<span class="tag tag-old">בארכיון${d.replacedBy ? " · הוחלף במסמך חדש" : ""}</span>` : "",
-    ...appendicesOf(d).map((a) => `<span class="tag tag-valid">📎 ${esc(a.title || "נספח")}${a.relevantUntil ? " · עד " + fmtDate(a.relevantUntil) : ""}</span>`),
-    isAppendix(d) ? `<span class="tag">📎 נספח ל: ${esc(docById(d.extends).title || "מסמך")}</span>` : "",
+    ...appendicesOf(d).map((a) => `<span class="tag tag-valid">📎 ${esc(a.title || "נספח")}${a.relevantUntil && !a.attach ? " · עד " + fmtDate(a.relevantUntil) : ""}</span>`),
+    isAppendix(d) ? `<span class="tag">📎 ${d.attach ? "מצורף ל" : "נספח ל"}: ${esc(titleOf(docById(d.extends)))}</span>` : "",
     d.people?.length ? `<span>של: <b>${esc(d.people.join(", "))}</b></span>` : "",
     d.date ? `<span>תאריך: <b>${fmtDate(d.date)}</b></span>` : "",
     d.provider ? `<span>גורם: <b>${esc(d.provider)}</b></span>` : "",
@@ -850,6 +850,7 @@ async function openViewer(d) {
   $("vwCal").hidden = !d.relevantUntil && !d.remindAt;
   $("vwActive").hidden = !isArchived(d) || isAppendix(d);
   $("vwArchive").hidden = isArchived(d) || isAppendix(d) || !(d.keepActive || d.relevantUntil);
+  $("vwAttach").textContent = isAppendix(d) ? "📎 ביטול הצירוף" : "📎 צירוף למסמך";
   const token = view.token = {};
   view.sharp = [];
   $("viewDlg").showModal();
@@ -1411,6 +1412,12 @@ function findReplaced(doc) {
 }
 async function offerReplace(newDocs) {
   for (const doc of newDocs) {
+    // תעודת זהות / מסמך של הצד השני בחוזה (משכיר, שוכר…): מציעים לצרף לחוזה
+    const contract = !looksLikeExtension(doc) && findContractFor(doc);
+    if (contract) {
+      if (await confirmBox(`נראה שזה שייך לחוזה "${titleOf(contract)}" (${contract.provider}).\nלצרף אותו לחוזה?`, "כן, לצרף", false, "לא")) await attachTo(docById(doc.id) || doc, contract);
+      continue;
+    }
     if (looksLikeExtension(doc)) {
       const base = findBase(doc);
       if (base) {
@@ -1432,6 +1439,51 @@ async function offerReplace(newDocs) {
     render();
   }
 }
+
+/* ======================= צירוף מסמך למסמך אחר (תעודת זהות של המשכיר לחוזה…) ======================= */
+const isContract = (d) => /חוזה|הסכם|שכירות/.test(`${d.title || ""} ${d.sub || ""}`);
+const nameTokens = (s) => String(s || "").replace(/["'״׳.,()\-–]/g, " ").split(/\s+/).filter((w) => w.length > 1);
+// אותו שם: כל המילים של השם הקצר נמצאות בארוך ("משה לוי" / "לוי משה בן דוד")
+function sameName(a, b) {
+  const A = nameTokens(a), B = nameTokens(b); if (!A.length || !B.length) return false;
+  const [s, l] = A.length <= B.length ? [A, new Set(B)] : [B, new Set(A)];
+  return s.length >= 2 && s.every((w) => l.has(w));
+}
+function findContractFor(doc) {
+  if (doc.extends || isContract(doc)) return null;
+  const names = [...(doc.people || []), doc.folder, doc.title].filter(Boolean);
+  return state.docs.find((c) => c.id !== doc.id && !isAppendix(c) && isContract(c) && c.provider && names.some((n) => sameName(n, c.provider))) || null;
+}
+async function attachTo(d, base) {
+  // עובר לאותו מקום של המסמך הראשי, ומוצג מתחתיו
+  const patch = { extends: base.id, attach: true, topic: base.topic, folder: base.folder || "", sub: base.sub || "" };
+  try { await state.api.saveDoc({ id: d.id, ...patch }); Object.assign(d, patch); delete d._h; toast(`צורף ל: ${titleOf(base)}`); render(); return true; }
+  catch (e) { console.error(e); toast("הצירוף נכשל, נסי שוב", 4000); return false; }
+}
+$("vwAttach").onclick = async () => {
+  const d = view.doc;
+  if (isAppendix(d)) {
+    if (!(await confirmBox(`לבטל את הצירוף ל"${titleOf(docById(d.extends))}"? המסמך יישאר באותה תיקייה, כמסמך נפרד.`, "בטל צירוף", false))) return;
+    const patch = { extends: "", attach: false, extNo: true };
+    try { await state.api.saveDoc({ id: d.id, ...patch }); Object.assign(d, patch); $("viewDlg").close(); toast("הצירוף בוטל"); render(); } catch (e) { console.error(e); toast("השמירה נכשלה, נסי שוב", 4000); }
+    return;
+  }
+  if (appendicesOf(d).length) return toast("למסמך הזה כבר מצורפים מסמכים, אי אפשר לצרף אותו למסמך אחר", 4000);
+  $("atQ").value = ""; renderAttachList(); $("attachDlg").showModal(); setTimeout(() => $("atQ").focus(), 50);
+};
+function renderAttachList() {
+  const d = view.doc, q = $("atQ").value.trim();
+  const rank = (o) => (folderOf(o) && folderOf(o) === folderOf(d) ? 0 : 2) + (isContract(o) ? 0 : 1);
+  const list = state.docs.filter((o) => o.id !== d.id && !isAppendix(o) && (!q || matches(o, q)))
+    .sort((a, b) => rank(a) - rank(b) || (b.date || "").localeCompare(a.date || "")).slice(0, 30);
+  $("atList").innerHTML = list.length ? list.map((o) => `<li><button type="button" class="at-item" data-at="${o.id}"><b>${esc(titleOf(o))}</b><span class="hint">${esc(pathText(o))}${o.date ? " · " + fmtDate(o.date) : ""}</span></button></li>`).join("") : `<li class="hint">לא נמצאו מסמכים</li>`;
+}
+$("atQ").addEventListener("input", renderAttachList);
+$("atList").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-at]"); if (!b) return;
+  const base = docById(b.dataset.at);
+  if (await attachTo(view.doc, base)) { $("attachDlg").close(); $("viewDlg").close(); }
+});
 
 /* ======================= סידור לתיקיות של מסמכים קיימים ======================= */
 // שם קיים של אותה דירה / אותו רכב / אותו אדם, כדי שלא ייווצרו שתי תיקיות לאותו דבר

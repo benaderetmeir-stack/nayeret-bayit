@@ -278,3 +278,8 @@ input[type="date"]::-webkit-date-and-time-value { text-align: start; }
 .offline-banner { background: #3A2E25; color: #fff; text-align: center; font-size: 13px; font-weight: 600; padding: 6px 16px; }
 body.is-offline #fab, body.is-offline #vwEdit, body.is-offline #vwDelete, body.is-offline #vwActive, body.is-offline #vwArchive,
 body.is-offline #browseExcel, body.is-offline .tab[data-view="settings"], body.is-offline #browseRename, body.is-offline #tripEdit { display: none !important; }
+/* צירוף למסמך */
+.at-list { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; display: grid; gap: 6px; }
+.at-item { width: 100%; text-align: start; display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--line, #EADFD6); border-radius: 10px; background: #fff; font: inherit; cursor: pointer; }
+.at-item:hover { border-color: #EA580C; }
+body.is-offline #vwAttach { display: none !important; }
