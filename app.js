@@ -1415,7 +1415,7 @@ async function offerReplace(newDocs) {
     // תעודת זהות / מסמך של הצד השני בחוזה (משכיר, שוכר…): מציעים לצרף לחוזה
     const contract = !looksLikeExtension(doc) && findContractFor(doc);
     if (contract) {
-      if (await confirmBox(`נראה שזה שייך לחוזה "${titleOf(contract)}" (${contract.provider}).\nלצרף אותו לחוזה?`, "כן, לצרף", false, "לא")) await attachTo(docById(doc.id) || doc, contract);
+      if (await confirmBox(`נראה שזה שייך לחוזה "${titleOf(contract)}"${contract.provider ? ` (${contract.provider})` : ""}.\nלצרף אותו לחוזה?`, "כן, לצרף", false, "לא")) await attachTo(docById(doc.id) || doc, contract);
       continue;
     }
     if (looksLikeExtension(doc)) {
@@ -1442,17 +1442,26 @@ async function offerReplace(newDocs) {
 
 /* ======================= צירוף מסמך למסמך אחר (תעודת זהות של המשכיר לחוזה…) ======================= */
 const isContract = (d) => /חוזה|הסכם|שכירות/.test(`${d.title || ""} ${d.sub || ""}`);
-const nameTokens = (s) => String(s || "").replace(/["'״׳.,()\-–]/g, " ").split(/\s+/).filter((w) => w.length > 1);
-// אותו שם: כל המילים של השם הקצר נמצאות בארוך ("משה לוי" / "לוי משה בן דוד")
-function sameName(a, b) {
-  const A = nameTokens(a), B = nameTokens(b); if (!A.length || !B.length) return false;
-  const [s, l] = A.length <= B.length ? [A, new Set(B)] : [B, new Set(A)];
-  return s.length >= 2 && s.every((w) => l.has(w));
+// מילים של שם, בלי ו' החיבור ("ורחל" → "רחל")
+const nameTokens = (s) => String(s || "").replace(/["'״׳.,()\-–:]/g, " ").split(/\s+/).map((w) => w.replace(/^ו(?=[א-ת]{2})/, "")).filter((w) => w.length > 1);
+const ID_DOC = /תעודת זהות|ת\.?ז|ספח|דרכון|רישיון נהיגה|רשיון נהיגה/;
+const NOT_NAME = /^(תעודת|זהות|ספח|דרכון|רישיון|רשיון|נהיגה|של|מסמך|העתק|צילום)$/;
+// השם שבמסמך (שתי מילים לפחות) מופיע בחוזה: בצד השני, בפירוט או בטקסט של החוזה
+function nameIn(name, text) {
+  const A = nameTokens(name).filter((w) => !NOT_NAME.test(w)); if (A.length < 2) return false;
+  const B = new Set(nameTokens(text));
+  return A.every((w) => B.has(w));
 }
 function findContractFor(doc) {
   if (doc.extends || isContract(doc)) return null;
-  const names = [...(doc.people || []), doc.folder, doc.title].filter(Boolean);
-  return state.docs.find((c) => c.id !== doc.id && !isAppendix(c) && isContract(c) && c.provider && names.some((n) => sameName(n, c.provider))) || null;
+  if (doc.topic !== "מסמכים אישיים" && !ID_DOC.test(`${doc.title || ""} ${doc.sub || ""}`)) return null;
+  // תעודה של מישהו מהמשפחה לא מצרפים לחוזה (השמות שלכם מופיעים בו כשוכרים / משכירים)
+  // "משפחה" = מי שמופיע גם במסמכים אחרים (בריאות, לימודים, נסיעות…), לא רק בתעודות. המשכיר מופיע רק בתעודה שלו
+  const fam = [...new Set(state.docs.filter((o) => o.id !== doc.id && !ID_DOC.test(`${o.title || ""} ${o.sub || ""}`) && !isContract(o)).flatMap((o) => [...(o.people || []), ruleOf(o.topic).by === "person" ? o.folder : ""]).filter(Boolean))];
+  const names = [...(doc.people || []), doc.folder, doc.title].filter(Boolean).filter((n) => !fam.some((f) => nameIn(f, n) || nameIn(n, f)));
+  if (!names.length) return null;
+  const hits = state.docs.filter((c) => c.id !== doc.id && !isAppendix(c) && isContract(c) && names.some((n) => nameIn(n, `${c.provider || ""} ${c.details || ""} ${c.fullText || ""}`)));
+  return hits.sort((a, b) => isArchived(a) - isArchived(b) || (b.date || "").localeCompare(a.date || ""))[0] || null;
 }
 async function attachTo(d, base) {
   // עובר לאותו מקום של המסמך הראשי, ומוצג מתחתיו

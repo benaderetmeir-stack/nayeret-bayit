@@ -1,11 +1,11 @@
 // שומר את האפליקציה עצמה (המסכים והקוד), כדי שתיפתח גם בלי אינטרנט.
-// תמיד מנסה קודם מהאינטרנט (כך שעדכונים מגיעים כרגיל), ורק כשאין חיבור משתמש בעותק השמור.
-const CACHE = "nb-shell-1";
-const WAIT = 4000;   // חיבור חלש מאוד: אחרי 4 שניות פותחים מהעותק השמור
+// כשיש אינטרנט: תמיד הגרסה העדכנית מהאתר. רק כשאין חיבור (או שהוא תקוע לגמרי) משתמשים בעותק השמור.
+const CACHE = "nb-shell-2";
+const STUCK = 12000;   // חיבור תקוע לגמרי: אחרי 12 שניות פותחים מהעותק השמור
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["./", "./index.html"])).catch(() => {}));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll([new Request("./", { cache: "no-store" }), new Request("./index.html", { cache: "no-store" })])).catch(() => {}));
 });
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
@@ -22,6 +22,11 @@ function keep(e, p) { p.catch(() => {}); try { e.waitUntil(p); } catch {} }
 async function fromCache(req) {
   return (await caches.match(req)) || (req.mode === "navigate" ? (await caches.match("./index.html")) || (await caches.match("./")) : undefined);
 }
+// ספארי לא מקבל דף שעבר הפניה (redirect) מתוך העותק: מעתיקים לתשובה רגילה
+async function clean(res) {
+  if (!res.redirected) return res;
+  return new Response(await res.blob(), { status: res.status, statusText: res.statusText, headers: res.headers });
+}
 
 self.addEventListener("fetch", (e) => {
   const req = e.request;
@@ -35,10 +40,12 @@ self.addEventListener("fetch", (e) => {
   }
   if (!mine && !font) return;   // דרייב, גוגל סקריפט, זיהוי: לא נוגעים
   e.respondWith((async () => {
-    const net = fetch(req).then((res) => { if (res.ok) keep(e, remember(req, res.clone())); return res; });
-    const slow = new Promise((r) => setTimeout(r, WAIT)).then(() => fromCache(req));
+    // הדף עצמו: תמיד ישר מהאתר, בלי זיכרון ביניים של הדפדפן, כדי שגרסה חדשה תגיע מיד
+    const net = (req.mode === "navigate" ? fetch(req.url, { cache: "no-store", credentials: "same-origin" }) : fetch(req))
+      .then(clean).then((res) => { if (res.ok) keep(e, remember(req, res.clone())); return res; });
+    const stuck = new Promise((r) => setTimeout(r, STUCK)).then(() => fromCache(req));
     try {
-      const first = await Promise.race([net, slow]);
+      const first = await Promise.race([net, stuck]);
       if (first) return first;
       return await net;
     } catch {
