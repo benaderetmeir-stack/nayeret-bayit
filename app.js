@@ -1185,13 +1185,25 @@ function fillForm(f, rec) {
   $("rvRemindSel").value = f.remindSel || ""; $("rvRemindDate").value = f.remindDate || ""; $("rvRemindText").value = f.remindText || ""; syncRemindUi();
   checkDup();
   $("peopleList").innerHTML = people().map((p) => `<option value="${esc(p)}">`).join("");
+  setAttachOptions(f);
   updateDest();
+}
+// "לצרף למסמך": החוזה שמתאים (לפי השם) נבחר לבד. אפשר לבחור אחר או "לא לצרף"
+function setAttachOptions(f) {
+  $("rvAttachBox").hidden = !!up.edit;
+  if (up.edit) { $("rvAttach").innerHTML = ""; return; }
+  const ppl = String(f.people || "").split(/[,،]/).map((x) => x.trim()).filter(Boolean);
+  const auto = f.attachTo === undefined ? findContractFor({ title: f.title, topic: f.topic, folder: f.folder, sub: f.sub, people: ppl })?.id || "" : f.attachTo;
+  const contracts = state.docs.filter((o) => !isAppendix(o) && isContract(o)).sort((a, b) => isArchived(a) - isArchived(b) || (b.date || "").localeCompare(a.date || ""));
+  const extra = auto && !contracts.some((o) => o.id === auto) ? [docById(auto)].filter(Boolean) : [];
+  $("rvAttach").innerHTML = `<option value="">לא לצרף, מסמך נפרד</option>` + [...extra, ...contracts].map((o) => `<option value="${o.id}">${esc(titleOf(o))}${o.date ? " · " + fmtDate(o.date) : ""}</option>`).join("");
+  $("rvAttach").value = auto;
 }
 function getForm() {
   return { title: $("rvTitle").value.trim(), topic: $("rvTopic").value, topicNew: $("rvTopicNew").value.trim(), folder: $("rvFolder").value.replace(/\s+/g, " ").trim(), sub: $("rvSub").value.replace(/\s+/g, " ").trim(), people: $("rvPeople").value, date: $("rvDate").value,
     provider: $("rvProvider").value.trim(), amount: $("rvAmount").value, currency: $("rvCur").value, until: $("rvUntil").value, reason: $("rvReason").value.trim(), details: $("rvDetails").value.trim(),
     note: $("rvNote").value.trim(), fullText: up.fullText || "", tripId: $("rvTrip").value, tripNew: up.tripNew,
-    remindSel: $("rvRemindSel").value, remindDate: $("rvRemindDate").value, remindText: $("rvRemindText").value.trim() };
+    remindSel: $("rvRemindSel").value, remindDate: $("rvRemindDate").value, remindText: $("rvRemindText").value.trim(), attachTo: up.edit ? undefined : $("rvAttach").value };
 }
 $("rvTopic").addEventListener("change", () => {
   const o = $("rvTopic").value === OTHER_TOPIC; $("rvTopicNewBox").hidden = !o; if (o) setTimeout(() => $("rvTopicNew").focus(), 30);
@@ -1221,6 +1233,8 @@ function syncFolderUi() {
 // "ייכנס ל…": רואים לפני השמירה בדיוק לאן המסמך הולך, והאם הוא ייכנס לארכיון
 function updateDest() {
   const f = getForm();
+  const base = f.attachTo && docById(f.attachTo);
+  if (base) { $("rvDest").innerHTML = `<div class="dest-line">📎 יצורף מתחת ל: <b>${esc(titleOf(base))}</b> <span class="hint">(${esc(pathText(base))})</span></div>`; return; }
   let topic = f.topic === OTHER_TOPIC ? f.topicNew : f.topic;
   if (!topic) { $("rvDest").innerHTML = ""; return; }
   const ppl = f.people.split(/[,،]/).map((x) => x.trim()).filter(Boolean);
@@ -1234,7 +1248,7 @@ function updateDest() {
   $("rvDest").innerHTML = `<div class="dest-line">📂 ייכנס ל: <b>${esc(path)}</b></div>`
     + (past ? `<div class="dest-arch">🗄 התוקף הסתיים ב-${fmtDate(f.until)}, אז המסמך ייכנס לארכיון. עדיין בתוקף? תקני את "רלוונטי עד".</div>` : "");
 }
-["rvTopic", "rvTopicNew", "rvFolder", "rvSub", "rvPeople", "rvUntil", "rvTitle", "rvTrip"].forEach((id) => { $(id).addEventListener("input", updateDest); $(id).addEventListener("change", updateDest); });
+["rvTopic", "rvTopicNew", "rvFolder", "rvSub", "rvPeople", "rvUntil", "rvTitle", "rvTrip", "rvAttach"].forEach((id) => { $(id).addEventListener("input", updateDest); $(id).addEventListener("change", updateDest); });
 
 // בנושאים לפי אדם: אם אין עדיין תיקייה, השם הראשון ב"של מי"
 $("rvPeople").addEventListener("change", () => { if (ruleOf($("rvTopic").value).by === "person" && !$("rvFolder").value) $("rvFolder").value = matchPerson($("rvPeople").value.split(/[,،]/)[0].trim()); });
@@ -1271,6 +1285,11 @@ function formToDoc(f) {
   const fix = placementPatch({ topic: tp, folder, sub: sb, people: ppl, title, details: f.details });
   if (fix) { tp = fix.topic; folder = fix.folder; sb = fix.sub; }
   if (folder) folder = canonicalFolder(tp, folder);
+  // מצורף למסמך אחר: עובר למקום של המסמך הראשי
+  const base = f.attachTo && docById(f.attachTo);
+  if (base) return { title, topic: base.topic, folder: base.folder || "", sub: base.sub || "", extends: base.id, attach: true, people: ppl, date: f.date, provider: f.provider, amount,
+    currency: amount != null && f.currency !== "ILS" ? f.currency : "", relevantUntil: f.until, relevantReason: f.until ? (f.reason || "בתוקף עד") : "",
+    details: f.details, note: f.note, fullText: f.fullText, tripId: f.tripId, remindAt, remindText: remindAt ? f.remindText : "" };
   return { title, topic: tp, folder, sub: sb, people: ppl, date: f.date, provider: f.provider, amount, currency: amount != null && f.currency !== "ILS" ? f.currency : "", relevantUntil: f.until, relevantReason: f.until ? (f.reason || "בתוקף עד") : "",
     details: f.details, note: f.note, fullText: f.fullText, tripId: f.tripId, remindAt, remindText: remindAt ? f.remindText : "" };
 }
@@ -1413,11 +1432,7 @@ function findReplaced(doc) {
 async function offerReplace(newDocs) {
   for (const doc of newDocs) {
     // תעודת זהות / מסמך של הצד השני בחוזה (משכיר, שוכר…): מציעים לצרף לחוזה
-    const contract = !looksLikeExtension(doc) && findContractFor(doc);
-    if (contract) {
-      if (await confirmBox(`נראה שזה שייך לחוזה "${titleOf(contract)}"${contract.provider ? ` (${contract.provider})` : ""}.\nלצרף אותו לחוזה?`, "כן, לצרף", false, "לא")) await attachTo(docById(doc.id) || doc, contract);
-      continue;
-    }
+    if (doc.extends) continue;   // צורף כבר במסך הבדיקה
     if (looksLikeExtension(doc)) {
       const base = findBase(doc);
       if (base) {
@@ -1460,7 +1475,7 @@ function findContractFor(doc) {
   const fam = [...new Set(state.docs.filter((o) => o.id !== doc.id && !ID_DOC.test(`${o.title || ""} ${o.sub || ""}`) && !isContract(o)).flatMap((o) => [...(o.people || []), ruleOf(o.topic).by === "person" ? o.folder : ""]).filter(Boolean))];
   const names = [...(doc.people || []), doc.folder, doc.title].filter(Boolean).filter((n) => !fam.some((f) => nameIn(f, n) || nameIn(n, f)));
   if (!names.length) return null;
-  const hits = state.docs.filter((c) => c.id !== doc.id && !isAppendix(c) && isContract(c) && names.some((n) => nameIn(n, `${c.provider || ""} ${c.details || ""} ${c.fullText || ""}`)));
+  const hits = state.docs.filter((c) => c.id !== doc.id && !isAppendix(c) && isContract(c) && names.some((n) => nameIn(n, `${(c.people || []).join(" ")} ${c.provider || ""} ${c.title || ""} ${c.details || ""} ${c.note || ""} ${c.fullText || ""}`)));
   return hits.sort((a, b) => isArchived(a) - isArchived(b) || (b.date || "").localeCompare(a.date || ""))[0] || null;
 }
 async function attachTo(d, base) {

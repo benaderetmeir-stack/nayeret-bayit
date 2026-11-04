@@ -270,6 +270,7 @@
         <label class="field"><span>תאריך המסמך</span><input id="rvDate" type="date"></label>
         <label class="field" id="rvFolderBox"><span id="rvFolderLbl">📂 תיקייה</span><input id="rvFolder" list="folderList" autocomplete="off" maxlength="50"></label>
         <label class="field" id="rvSubBox"><span id="rvSubLbl">סוג</span><input id="rvSub" list="subList" autocomplete="off" maxlength="40"></label>
+        <label class="field span2" id="rvAttachBox"><span>📎 לצרף למסמך (לא חובה)</span><select id="rvAttach"></select></label>
         <label class="field span2"><span>של מי (אפשר כמה, מופרדים בפסיק)</span><input id="rvPeople" autocomplete="off" list="peopleList"></label>
         <label class="field"><span>גורם / ספק</span><input id="rvProvider" autocomplete="off" placeholder="רופא, חנות, חברת ביטוח…"></label>
         <label class="field"><span>סכום (אם יש)</span><div class="amt-row"><input id="rvAmount" type="number" step="0.01" inputmode="decimal"><select id="rvCur" aria-label="מטבע"><option value="ILS">₪</option><option value="USD">$</option><option value="EUR">€</option><option value="GBP">£</option></select></div></label>
@@ -399,6 +400,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="config.js?v=13"></script>
-<script type="module" src="app.js?v=20"></script>
+<script type="module" src="app.js?v=22"></script>
 </body>
 </html>
